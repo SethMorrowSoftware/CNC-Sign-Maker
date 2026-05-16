@@ -10,14 +10,27 @@
   'use strict';
 
   var BASE = 'api/index.php';
+  var TIMEOUT_MS = 12000;
+
+  /* Build a query-string route (api/index.php?r=bits/5). PATH_INFO is
+     unreliable on shared cPanel hosts, so the route always travels in ?r=. */
+  function routeUrl(path) {
+    return BASE + '?r=' + encodeURIComponent(String(path).replace(/^\/+/, ''));
+  }
 
   function request(method, path, body) {
-    var opts = { method: method, headers: {} };
+    var opts = { method: method, headers: { 'Accept': 'application/json' } };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
-    return fetch(BASE + path, opts).then(function (res) {
+    var timer = null;
+    if (typeof AbortController !== 'undefined') {
+      var ctrl = new AbortController();
+      opts.signal = ctrl.signal;
+      timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT_MS);
+    }
+    return fetch(routeUrl(path), opts).then(function (res) {
       return res.text().then(function (text) {
         var data = null;
         try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
@@ -26,6 +39,15 @@
         }
         return data;
       });
+    }).then(function (v) {
+      if (timer) clearTimeout(timer);
+      return v;
+    }, function (e) {
+      if (timer) clearTimeout(timer);
+      if (e && e.name === 'AbortError') {
+        throw new Error('the server did not respond in time');
+      }
+      throw e;
     });
   }
 
@@ -47,7 +69,7 @@
     deletePreset:  function (id) { return request('DELETE', '/presets/' + id); },
 
     saveJob:       function (j) { return request('POST', '/jobs/save', j); },
-    jobUrl:        function (id) { return BASE + '/jobs/' + id; }
+    jobUrl:        function (id) { return routeUrl('jobs/' + id); }
   };
 
   /* ---- LocalStorage autosave (spec: in-session preset autosave) ---- */
