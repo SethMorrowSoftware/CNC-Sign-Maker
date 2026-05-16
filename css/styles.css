@@ -318,12 +318,15 @@ select {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   flex-shrink: 0;
+  gap: 2px;
+  padding: 6px 8px 0;
 }
 .tabs button {
   background: none; border: none;
   color: var(--muted); font-size: 11.5px; font-weight: 600;
-  padding: 11px 11px; border-bottom: 2px solid transparent;
+  padding: 9px 10px; border-bottom: 2px solid transparent;
   transition: color .12s;
+  min-width: 78px;
 }
 .tabs button:hover { color: var(--text); }
 .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -449,9 +452,17 @@ button:focus-visible,
     border-bottom: 1px solid var(--border); }
   .col-center { min-height: 460px; }
   .preview-wrap { min-height: 420px; }
+  .tabs { position: sticky; top: 0; z-index: 2; }
 }
 @media (max-width: 560px) {
+  .topbar { height: auto; min-height: 56px; padding: 8px 12px; flex-wrap: wrap; row-gap: 8px; }
+  .topbar-spacer { display: none; }
+  .topbar-meta { margin-left: auto; }
   .form-grid { grid-template-columns: 1fr; }
   .live-grid { grid-template-columns: 1fr; }
   .preview-toolbar { flex-wrap: wrap; }
+  .modal { padding: 12px; }
+  .modal-card { max-height: 92vh; }
+  .modal-foot-actions { width: 100%; }
+  .modal-foot-actions .btn { flex: 1; min-width: 0; }
 }
