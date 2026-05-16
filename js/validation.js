@@ -12,6 +12,9 @@
   var LEVEL_RANK = { error: 0, warn: 1, info: 2 };
 
   function run(job, toolpath, s, bit, material) {
+    job = job || { subpaths: [], hint: null };
+    toolpath = toolpath || { ops: [], stats: {}, warnings: [] };
+    s = s || {};
     var issues = [];
     function add(level, msg, extra) {
       issues.push(Object.assign({ level: level, msg: msg }, extra || {}));
@@ -20,7 +23,7 @@
     var op = s.operation || 'engrave';
     var needsBit = op !== 'engrave';
     var finalDepth = s.finalDepth != null ? s.finalDepth : -1;
-    var b = toolpath.stats.bounds;
+    var b = toolpath.stats && toolpath.stats.bounds ? toolpath.stats.bounds : null;
 
     /* --- final depth must be below the surface --- */
     if (finalDepth >= 0) {
@@ -133,7 +136,7 @@
     }
 
     /* --- oversized drilled holes (gotcha 13) --- */
-    var oversized = toolpath.ops.filter(function (o) {
+    var oversized = (toolpath.ops || []).filter(function (o) {
       return o.drill && o.drill.oversized;
     }).length;
     if (oversized > 0) {
@@ -142,7 +145,7 @@
     }
 
     /* --- overlapping outer contours (spec §10) --- */
-    var outers = job.subpaths.filter(function (sp) { return sp.type === 'outer'; });
+    var outers = (job.subpaths || []).filter(function (sp) { return sp.type === 'outer'; });
     for (var i = 0; i < outers.length; i++) {
       for (var k = i + 1; k < outers.length; k++) {
         if (bboxOverlap(outers[i].bbox, outers[k].bbox)) {
