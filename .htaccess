@@ -1,0 +1,13 @@
+# LowRider Forge — root server config (Apache).
+DirectoryIndex index.html
+
+# Never serve the spec, installer, database files or VCS metadata.
+<FilesMatch "\.(sqlite|sqlite-wal|sqlite-shm|md|sh)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>

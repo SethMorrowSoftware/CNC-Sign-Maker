@@ -1,0 +1,11 @@
+# Runtime data — created on first run, never committed.
+data/forge.sqlite
+data/forge.sqlite-wal
+data/forge.sqlite-shm
+data/jobs/*
+!data/jobs/.gitkeep
+
+# Editor / OS noise
+.DS_Store
+*.swp
+node_modules/
