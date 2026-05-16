@@ -90,16 +90,21 @@
 
   /* ---- pass depths ---------------------------------------------------- */
 
-  /** Step from 0 down to finalZ in DOC increments; last step is always finalZ. */
+  /** Step from 0 down to finalZ in DOC increments; last step is always finalZ.
+      The DOC is widened if needed so a tiny value cannot generate a runaway
+      pass count that would freeze the browser. */
   function computeDepths(finalZ, doc) {
     if (finalZ >= 0) return [finalZ];
     doc = Math.abs(doc) > 1e-6 ? Math.abs(doc) : Math.abs(finalZ);
+    var maxPasses = 1000;
+    if (Math.abs(finalZ) / doc > maxPasses) doc = Math.abs(finalZ) / maxPasses;
     var depths = [], z = 0;
-    while (true) {
+    while (depths.length < maxPasses) {
       z -= doc;
-      if (z <= finalZ + 1e-6) { depths.push(finalZ); break; }
+      if (z <= finalZ + 1e-6) break;
       depths.push(z);
     }
+    depths.push(finalZ);
     return depths;
   }
 
@@ -328,7 +333,6 @@
           expand(nx - r, ny - r); expand(nx + r, ny + r);
         }
         cx = nx; cy = ny;
-        if (m.z != null && (m.t === 'cut' || m.t === 'plunge')) zPasses += 0;
       });
       if (op.passes) zPasses += op.passes;
       else if (!op.empty) zPasses += 1;

@@ -295,6 +295,12 @@
       state.validation = Forge.validation.run(
         state.job, state.toolpath, s, state.bit, state.material);
     } catch (e) {
+      // Drop stale results so a failed build can never be downloaded.
+      state.job = state.toolpath = state.validation = null;
+      preview.draw({ machineX: s.machineX, machineY: s.machineY });
+      renderValidation();
+      renderLiveValues();
+      $('#generate-btn').disabled = true;
       toast('Toolpath error: ' + e.message, 'error');
       return;
     }

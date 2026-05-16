@@ -71,6 +71,14 @@
     }
   }
 
+  /* True only when a length carries an explicit physical unit (mm/cm/in/pt/pc).
+     Unitless or px values depend on the 96-dpi assumption and warrant a notice. */
+  function hasPhysicalUnit(str) {
+    if (str == null) return false;
+    var m = /([a-z%]+)\s*$/i.exec(String(str).trim());
+    return !!m && /^(mm|cm|in|pt|pc)$/i.test(m[1]);
+  }
+
   /* ---- curve tessellation -------------------------------------------- */
 
   function flattenCubic(p0, p1, p2, p3, tol, out, depth) {
@@ -420,8 +428,10 @@
     // --- unit resolution ---
     var vb = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(parseFloat)
       .filter(function (v) { return !isNaN(v); });
-    var wMm = lengthToMm(svg.getAttribute('width'));
-    var hMm = lengthToMm(svg.getAttribute('height'));
+    var wAttr = svg.getAttribute('width'), hAttr = svg.getAttribute('height');
+    var wMm = lengthToMm(wAttr);
+    var hMm = lengthToMm(hAttr);
+    var hadPhysicalUnits = hasPhysicalUnit(wAttr) || hasPhysicalUnit(hAttr);
     var root, docW, docH;
 
     if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) {
@@ -481,7 +491,7 @@
       docWidthMm: docW,
       docHeightMm: docH,
       hadViewBox: vb.length === 4,
-      hadUnits: wMm != null,
+      hadUnits: hadPhysicalUnits,
       hint: { parametric: subpaths.length > 16 && repeated > 0 },
       tolerance: tol
     };

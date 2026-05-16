@@ -22,6 +22,13 @@
     var finalDepth = s.finalDepth != null ? s.finalDepth : -1;
     var b = toolpath.stats.bounds;
 
+    /* --- final depth must be below the surface --- */
+    if (finalDepth >= 0) {
+      add('warn', 'Final depth is ' + finalDepth + 'mm. Depth should be ' +
+        'negative — below the material surface. A zero or positive value ' +
+        'leaves the bit at or above the stock and cuts nothing.');
+    }
+
     /* --- machine envelope (spec §10) --- */
     var envelopeOk = true;
     if (b && isFinite(b.minX)) {
