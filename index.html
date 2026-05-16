@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LowRider Forge — SVG to Gcode</title>
+<meta name="description" content="Self-hosted SVG-to-Gcode tool for the LowRider v4 CNC.">
+<link rel="icon" href="img/logo.svg">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <img src="img/logo.svg" alt="" class="brand-logo">
+    <div>
+      <div class="brand-name">LowRider&nbsp;Forge</div>
+      <div class="brand-sub">SVG&nbsp;&rarr;&nbsp;FluidNC gcode</div>
+    </div>
+  </div>
+  <div class="topbar-spacer"></div>
+  <div class="topbar-meta">
+    <span id="server-status" class="pill pill-muted">connecting&hellip;</span>
+    <span class="pill pill-muted" id="version-pill">v1.0.0</span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============================ LEFT ============================ -->
+  <aside class="col col-left">
+
+    <section class="card">
+      <h2>1 &middot; SVG file</h2>
+      <div id="dropzone" class="dropzone">
+        <input type="file" id="svg-input" accept=".svg,image/svg+xml" hidden>
+        <div class="dropzone-inner">
+          <strong>Drop an SVG here</strong>
+          <span>or click to browse</span>
+        </div>
+      </div>
+      <div id="svg-info" class="svg-info hidden"></div>
+      <div class="sample-row">
+        <span class="muted-label">Samples:</span>
+        <button class="link-btn" data-sample="square.svg">square</button>
+        <button class="link-btn" data-sample="circle.svg">circle</button>
+        <button class="link-btn" data-sample="holes-plate.svg">holes plate</button>
+        <button class="link-btn" data-sample="text-sign.svg">text</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2 &middot; Operation</h2>
+      <div class="segmented" id="operation-picker">
+        <button data-op="engrave" class="active">Engrave</button>
+        <button data-op="profile-out">Profile&nbsp;out</button>
+        <button data-op="profile-in">Profile&nbsp;in</button>
+        <button data-op="drill">Drill</button>
+      </div>
+      <p class="op-hint" id="op-hint"></p>
+    </section>
+
+    <section class="card">
+      <h2>3 &middot; Material &amp; bit</h2>
+      <label class="field">
+        <span>Material</span>
+        <select id="material-picker"></select>
+      </label>
+      <label class="field">
+        <span>Bit</span>
+        <select id="bit-picker"></select>
+      </label>
+      <p class="muted small" id="material-note"></p>
+    </section>
+
+    <section class="card">
+      <h2>Job presets</h2>
+      <label class="field">
+        <span>Load a saved preset</span>
+        <select id="preset-picker"><option value="">&mdash; choose &mdash;</option></select>
+      </label>
+      <div class="btn-row">
+        <button class="btn" id="load-preset-btn">Load</button>
+        <button class="btn btn-ghost" id="delete-preset-btn">Delete</button>
+      </div>
+    </section>
+
+    <section class="card validation-card">
+      <h2>Pre-flight checks</h2>
+      <ul id="validation-list" class="validation-list">
+        <li class="vi vi-info">Upload an SVG to begin.</li>
+      </ul>
+    </section>
+
+    <div class="action-bar">
+      <button class="btn btn-primary btn-block" id="generate-btn" disabled>
+        Generate gcode
+      </button>
+      <button class="btn btn-block" id="save-preset-btn">Save current settings as preset</button>
+    </div>
+
+  </aside>
+
+  <!-- ============================ CENTER ============================ -->
+  <section class="col col-center">
+    <div class="preview-toolbar">
+      <div class="tb-group">
+        <button class="tb-btn" id="zoom-out" title="Zoom out">&minus;</button>
+        <button class="tb-btn" id="zoom-in" title="Zoom in">+</button>
+        <button class="tb-btn" id="zoom-fit" title="Fit to view">Fit</button>
+      </div>
+      <div class="tb-group">
+        <label class="tb-toggle"><input type="checkbox" id="t-rapids" checked> Rapids</label>
+        <label class="tb-toggle"><input type="checkbox" id="t-tabs" checked> Tabs</label>
+        <label class="tb-toggle"><input type="checkbox" id="t-geom" checked> Reference</label>
+      </div>
+      <div class="tb-spacer"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="preview-wrap">
+      <canvas id="preview"></canvas>
+      <div id="preview-empty" class="preview-empty">
+        <div>
+          <strong>No geometry loaded</strong>
+          <span>Upload an SVG or pick a sample to see the toolpath.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ RIGHT ============================ -->
+  <aside class="col col-right">
+    <div class="tabs" id="settings-tabs">
+      <button data-tab="operation" class="active">Operation</button>
+      <button data-tab="tabs">Tabs</button>
+      <button data-tab="geometry">Geometry</button>
+      <button data-tab="machine">Machine</button>
+      <button data-tab="bit">Bit</button>
+      <button data-tab="material">Material</button>
+    </div>
+
+    <div class="tab-body">
+      <div class="tab-panel active" data-panel="operation">
+        <div class="form-grid" id="form-operation"></div>
+      </div>
+      <div class="tab-panel" data-panel="tabs">
+        <p class="panel-note">Tabs apply to <strong>profile-out</strong> jobs only.</p>
+        <div class="form-grid" id="form-tabs"></div>
+      </div>
+      <div class="tab-panel" data-panel="geometry">
+        <div class="form-grid" id="form-geometry"></div>
+      </div>
+      <div class="tab-panel" data-panel="machine">
+        <div class="form-grid" id="form-machine"></div>
+      </div>
+      <div class="tab-panel" data-panel="bit">
+        <div class="form-grid" id="form-bit"></div>
+        <div class="btn-row">
+          <button class="btn" id="bit-update">Update</button>
+          <button class="btn" id="bit-new">Save as new</button>
+          <button class="btn btn-ghost" id="bit-delete">Delete</button>
+        </div>
+      </div>
+      <div class="tab-panel" data-panel="material">
+        <div class="form-grid" id="form-material"></div>
+        <div class="btn-row">
+          <button class="btn" id="material-update">Update</button>
+          <button class="btn" id="material-new">Save as new</button>
+          <button class="btn btn-ghost" id="material-delete">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="live-values">
+      <h3>Live job summary</h3>
+      <div class="live-grid">
+        <div class="live-item"><span>Stock required</span><strong id="lv-stock">&mdash;</strong></div>
+        <div class="live-item"><span>Est. runtime</span><strong id="lv-runtime">&mdash;</strong></div>
+        <div class="live-item"><span>Total Z passes</span><strong id="lv-passes">&mdash;</strong></div>
+        <div class="live-item"><span>Chip load</span><strong id="lv-chip">&mdash;</strong></div>
+      </div>
+    </div>
+  </aside>
+
+</main>
+
+<!-- ============================ gcode MODAL ============================ -->
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="modal-title">Generated gcode</h2>
+      <button class="icon-btn" id="modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-sub" id="modal-sub"></div>
+    <pre id="gcode-output" class="gcode-output"></pre>
+    <div class="modal-foot">
+      <label class="tb-toggle">
+        <input type="checkbox" id="airpass-toggle"> Air pass (Z raised 25&nbsp;mm, no cutting)
+      </label>
+      <div class="modal-foot-actions">
+        <button class="btn" id="copy-gcode">Copy</button>
+        <button class="btn" id="save-server">Save to server</button>
+        <button class="btn btn-primary" id="download-gcode">Download .gcode</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="js/lib/clipper.js"></script>
+<script src="js/geometry.js"></script>
+<script src="js/svg-parser.js"></script>
+<script src="js/toolpath.js"></script>
+<script src="js/gcode-emitter.js"></script>
+<script src="js/validation.js"></script>
+<script src="js/preview.js"></script>
+<script src="js/presets.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
