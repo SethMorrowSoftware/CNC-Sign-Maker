@@ -788,6 +788,12 @@
     /* SVG upload */
     var dz = $('#dropzone'), input = $('#svg-input');
     dz.addEventListener('click', function () { input.click(); });
+    dz.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        input.click();
+      }
+    });
     input.addEventListener('change', function () { readFile(input.files[0]); });
     ['dragenter', 'dragover'].forEach(function (ev) {
       dz.addEventListener(ev, function (e) {
