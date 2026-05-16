@@ -1,8 +1,12 @@
-# LowRider Forge — root server config (Apache).
+# LowRider Forge — root server config (Apache / cPanel).
+
 DirectoryIndex index.html
 
-# Never serve the spec, installer, database files or VCS metadata.
-<FilesMatch "\.(sqlite|sqlite-wal|sqlite-shm|md|sh)$">
+# No directory listings anywhere under the app.
+Options -Indexes
+
+# Never serve the spec, installer, database files, logs or VCS metadata.
+<FilesMatch "\.(sqlite|sqlite-journal|sqlite-wal|sqlite-shm|db|md|sh|log|ini)$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -11,3 +15,26 @@ DirectoryIndex index.html
     Deny from all
   </IfModule>
 </FilesMatch>
+
+# Block dotfiles (.git, .htaccess, .gitignore, ...).
+<FilesMatch "^\.">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Baseline security headers (skipped silently if mod_headers is absent).
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set Referrer-Policy "same-origin"
+</IfModule>
+
+# UTF-8 for the text assets the app serves.
+<IfModule mod_mime.c>
+  AddDefaultCharset utf-8
+</IfModule>

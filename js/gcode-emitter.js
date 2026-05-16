@@ -21,11 +21,13 @@
     return best.dial;
   }
 
-  /** Format a coordinate: 3 decimals, trailing zeros trimmed, no "-0". */
+  /** Format a coordinate: 3 decimals, trailing zeros trimmed, no "-0".
+      A non-finite value is clamped to 0 so a stray NaN can never emit a
+      line the controller would reject. */
   function fmt(n) {
+    if (!isFinite(n)) return '0';
     var r = Math.round(n * 1000) / 1000;
-    if (r === 0) r = 0;
-    return String(r);
+    return String(r === 0 ? 0 : r);
   }
 
   function applyTemplate(str, tokens) {

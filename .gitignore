@@ -1,7 +1,6 @@
 # Runtime data — created on first run, never committed.
-data/forge.sqlite
-data/forge.sqlite-wal
-data/forge.sqlite-shm
+# Covers the database plus any -journal / -wal / -shm sidecar files.
+data/forge.sqlite*
 data/jobs/*
 !data/jobs/.gitkeep
 

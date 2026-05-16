@@ -10,6 +10,13 @@
 </head>
 <body>
 
+<noscript>
+  <div class="noscript-banner">
+    LowRider Forge needs JavaScript. All geometry and gcode generation runs in
+    your browser — please enable JavaScript and reload the page.
+  </div>
+</noscript>
+
 <header class="topbar">
   <div class="brand">
     <img src="img/logo.svg" alt="" class="brand-logo">
@@ -20,7 +27,8 @@
   </div>
   <div class="topbar-spacer"></div>
   <div class="topbar-meta">
-    <span id="server-status" class="pill pill-muted">connecting&hellip;</span>
+    <span id="server-status" class="pill pill-muted" role="status"
+          aria-live="polite">connecting&hellip;</span>
     <span class="pill pill-muted" id="version-pill">v1.0.0</span>
   </div>
 </header>
@@ -32,7 +40,8 @@
 
     <section class="card">
       <h2>1 &middot; SVG file</h2>
-      <div id="dropzone" class="dropzone">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button"
+           aria-label="Upload an SVG file: drop a file here or activate to browse">
         <input type="file" id="svg-input" accept=".svg,image/svg+xml" hidden>
         <div class="dropzone-inner">
           <strong>Drop an SVG here</strong>
@@ -87,7 +96,7 @@
 
     <section class="card validation-card">
       <h2>Pre-flight checks</h2>
-      <ul id="validation-list" class="validation-list">
+      <ul id="validation-list" class="validation-list" aria-live="polite">
         <li class="vi vi-info">Upload an SVG to begin.</li>
       </ul>
     </section>
@@ -118,7 +127,8 @@
       <div class="legend" id="legend"></div>
     </div>
     <div class="preview-wrap">
-      <canvas id="preview"></canvas>
+      <canvas id="preview" aria-label="Toolpath preview: machine envelope,
+        stock, geometry and the computed cut path"></canvas>
       <div id="preview-empty" class="preview-empty">
         <div>
           <strong>No geometry loaded</strong>
@@ -185,7 +195,8 @@
 </main>
 
 <!-- ============================ gcode MODAL ============================ -->
-<div id="modal" class="modal hidden">
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true"
+     aria-labelledby="modal-title">
   <div class="modal-card">
     <div class="modal-head">
       <h2 id="modal-title">Generated gcode</h2>
@@ -206,7 +217,7 @@
   </div>
 </div>
 
-<div id="toast" class="toast"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script src="js/lib/clipper.js"></script>
 <script src="js/geometry.js"></script>

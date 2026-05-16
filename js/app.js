@@ -295,6 +295,12 @@
       state.validation = Forge.validation.run(
         state.job, state.toolpath, s, state.bit, state.material);
     } catch (e) {
+      // Drop stale results so a failed build can never be downloaded.
+      state.job = state.toolpath = state.validation = null;
+      preview.draw({ machineX: s.machineX, machineY: s.machineY });
+      renderValidation();
+      renderLiveValues();
+      $('#generate-btn').disabled = true;
       toast('Toolpath error: ' + e.message, 'error');
       return;
     }
@@ -782,6 +788,12 @@
     /* SVG upload */
     var dz = $('#dropzone'), input = $('#svg-input');
     dz.addEventListener('click', function () { input.click(); });
+    dz.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        input.click();
+      }
+    });
     input.addEventListener('change', function () { readFile(input.files[0]); });
     ['dragenter', 'dragover'].forEach(function (ev) {
       dz.addEventListener(ev, function (e) {

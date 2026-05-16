@@ -18,18 +18,31 @@ gcode. The tool keeps working with no network once the page has loaded.
 
 ## Install
 
+### Local (development)
+
 ```bash
 git clone <this-repo> lowrider-forge
 cd lowrider-forge
-./install.sh          # creates data/, seeds the SQLite database
+./install.sh           # optional — creates data/ and seeds the database
 php -S localhost:8000  # serve from the project root
 ```
 
 Then open <http://localhost:8000>.
 
-`install.sh` is optional — the database is created and seeded automatically on
-the first API request. For a shared LAMP host, point the document root at the
-project folder and make sure `data/` is writable by the web server.
+### Shared cPanel hosting (production)
+
+1. Upload the project folder into — or next to — `public_html`, for example
+   `public_html/forge/`.
+2. In cPanel **MultiPHP Manager**, set that directory to **PHP 8.1 or newer**.
+3. Make sure `data/` is writable by the account. On the suEXEC / PHP-FPM
+   setup cPanel uses by default a `0755` directory is enough.
+4. Open the URL. The SQLite database is created and seeded automatically on
+   the first request — no build step, no SSH, no `install.sh` required.
+
+The app never assumes its install path, so a subdirectory
+(`example.com/forge/`) behaves exactly like a document root. The database
+deliberately uses a rollback journal rather than WAL, because cPanel home
+directories are usually NFS-backed and SQLite's WAL mode is not NFS-safe.
 
 ## Project layout
 
@@ -107,22 +120,30 @@ The validator encodes the hard-won lessons from spec section 14:
   your controller YAML — and remember `:low` *must be single-quoted in YAML*.
 - **Job size looks wrong after upload.** If the SVG had no explicit units the
   size is assumed at 96 dpi; correct it with the *Scale* setting.
-- **"Backend unavailable".** gcode generation still works fully — only preset
-  saving/loading needs the PHP server. Check that `data/` is writable.
+- **"Backend unavailable".** gcode generation still works fully — only preset,
+  bit and material storage needs PHP. Check that `data/` is writable and that
+  the `pdo_sqlite` extension is enabled (cPanel → *Select PHP Version* →
+  *Extensions*). The tool surfaces the exact cause in the error toast.
+- **HTTP 500 on every page.** A small number of hosts forbid `Options` in
+  `.htaccess`. If so, delete the `Options -Indexes` line from the root
+  `.htaccess`.
 - **An inside cut is skipped.** The contour was too small to offset inward
   with the chosen bit. Use a smaller bit or a different operation.
 
 ## API
 
-All endpoints are under `api/index.php` and return JSON.
+All endpoints are served by `api/index.php` and return JSON. The client
+addresses them with a query-string route — `api/index.php?r=bits/3` — because
+`PATH_INFO` is not reliably populated on shared cPanel PHP-FPM / CGI setups.
+The `PATH_INFO` form (`api/index.php/bits/3`) still works as a fallback.
 
 ```
-GET/POST/PUT/DELETE  /bits          /bits/:id
-GET/POST/PUT/DELETE  /materials     /materials/:id
-GET/POST/DELETE      /presets       /presets/:id
-POST                 /jobs/save     persist generated gcode
-GET                  /jobs          /jobs/:id  (download)
-GET                  /health
+GET/POST/PUT/DELETE  bits          bits/:id
+GET/POST/PUT/DELETE  materials     materials/:id
+GET/POST/DELETE      presets       presets/:id
+POST                 jobs/save     persist generated gcode
+GET                  jobs          jobs/:id  (download)
+GET                  health
 ```
 
 ## Known limitations (v1)
