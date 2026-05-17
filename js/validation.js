@@ -34,19 +34,41 @@
 
     /* --- machine envelope (spec §10) --- */
     var envelopeOk = true;
+    var origin = s.originPosition || 'bottom-left';
+    // center / top-left deliberately place work zero inside the job, so the
+    // toolpath legitimately spans negative coordinates — the operator sets
+    // machine work zero at that point. bottom-left / custom must stay positive.
+    var originInside = origin === 'center' || origin === 'top-left';
     if (b && isFinite(b.minX)) {
-      if (b.minX < -0.01 || b.minY < -0.01) {
+      var jobW = b.maxX - b.minX, jobH = b.maxY - b.minY;
+      var tooBig = jobW > s.machineX + 0.01 || jobH > s.machineY + 0.01;
+      var fitsRotated = jobW <= s.machineY + 0.01 && jobH <= s.machineX + 0.01;
+      if (tooBig) {
         envelopeOk = false;
-        add('error', 'Toolpath has negative X/Y coordinates. The LowRider works ' +
-          'in a positive-only area — use the bottom-left origin.');
-      }
-      if (b.maxX > s.machineX + 0.01 || b.maxY > s.machineY + 0.01) {
-        envelopeOk = false;
-        add('error', 'Job is ' + fmt(b.maxX) + ' x ' + fmt(b.maxY) + 'mm but the ' +
-          'machine envelope is ' + s.machineX + ' x ' + s.machineY + 'mm. It will not fit.');
+        add('error', 'Job is ' + fmt(jobW) + ' x ' + fmt(jobH) + 'mm but the ' +
+          'machine envelope is ' + s.machineX + ' x ' + s.machineY +
+          'mm. It will not fit.');
         // can it fit if rotated 90 degrees? (spec §10 orientation check)
-        if (b.maxX <= s.machineY + 0.01 && b.maxY <= s.machineX + 0.01) {
+        if (fitsRotated) {
           add('info', 'The job would fit if rotated 90 degrees.', { id: 'rotate' });
+        }
+      }
+      if (originInside) {
+        add('info', 'Origin is the ' + (origin === 'center' ? 'centre' : 'top-left') +
+          ' of the job, so the toolpath spans negative coordinates by design. ' +
+          'Set the machine work zero at that point — not at a stock corner.');
+      } else {
+        if (b.minX < -0.01 || b.minY < -0.01) {
+          envelopeOk = false;
+          add('error', 'Toolpath has negative X/Y coordinates. With the ' + origin +
+            ' origin every coordinate must stay positive — raise the stock margin ' +
+            'or check the custom origin values.');
+        }
+        if (!tooBig && (b.maxX > s.machineX + 0.01 || b.maxY > s.machineY + 0.01)) {
+          envelopeOk = false;
+          add('error', 'Job reaches ' + fmt(b.maxX) + ' x ' + fmt(b.maxY) +
+            'mm — past the ' + s.machineX + ' x ' + s.machineY + 'mm envelope. ' +
+            'Move it closer to the origin.');
         }
       }
     }
@@ -144,16 +166,34 @@
         'plunge-drilled oversized to the bit diameter. Check the gcode header.');
     }
 
-    /* --- overlapping outer contours (spec §10) --- */
+    /* --- nested / overlapping outer contours (spec §10). A contour fully
+       inside another is a normal window/bore, not a problematic overlap. --- */
     var outers = (job.subpaths || []).filter(function (sp) { return sp.type === 'outer'; });
+    var partialOverlap = false, nested = false;
     for (var i = 0; i < outers.length; i++) {
       for (var k = i + 1; k < outers.length; k++) {
-        if (bboxOverlap(outers[i].bbox, outers[k].bbox)) {
-          add('warn', 'Two or more outer contours overlap — review the preview ' +
-            'manually to confirm the cut order is safe.');
-          i = outers.length; break;
+        if (!bboxOverlap(outers[i].bbox, outers[k].bbox)) continue;
+        if (bboxContains(outers[i].bbox, outers[k].bbox) ||
+            bboxContains(outers[k].bbox, outers[i].bbox)) {
+          nested = true;
+        } else {
+          partialOverlap = true;
         }
       }
+    }
+    if (partialOverlap) {
+      add('warn', 'Two outer contours partially overlap — review the preview ' +
+        'manually to confirm the cut order is safe.');
+    }
+    if (nested && op === 'profile-out') {
+      add('info', 'An outer contour sits inside another. Profile-out offsets ' +
+        'every contour outward, so an interior window is cut oversized by a tool ' +
+        'radius — run profile-in separately for interior cutouts.');
+    }
+    if (nested && op === 'profile-in') {
+      add('info', 'An outer contour sits inside another. Profile-in offsets ' +
+        'every contour inward, so an outer edge is cut undersized by a tool ' +
+        'radius — run profile-out separately for the outer edge.');
     }
 
     /* --- M0 pauses (gotcha 1) --- */
@@ -188,6 +228,10 @@
 
   function bboxOverlap(a, b) {
     return !(a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY);
+  }
+  function bboxContains(a, b) {
+    return b.minX >= a.minX - 0.01 && b.maxX <= a.maxX + 0.01 &&
+           b.minY >= a.minY - 0.01 && b.maxY <= a.maxY + 0.01;
   }
   function fmt(n) { return (Math.round(n * 10) / 10).toString(); }
 

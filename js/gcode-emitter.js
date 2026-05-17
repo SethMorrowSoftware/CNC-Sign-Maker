@@ -44,6 +44,16 @@
     return name || 'job.gcode';
   }
 
+  /** Human description of where the gcode origin sits, for the header. */
+  function originLabel(origin) {
+    switch (origin) {
+      case 'center':   return 'CENTRE of the job';
+      case 'top-left': return 'TOP-LEFT of the job';
+      case 'custom':   return 'CUSTOM placement (see Geometry settings)';
+      default:         return 'FRONT-LEFT of stock';
+    }
+  }
+
   /**
    * Emit gcode text.
    * @param {object} toolpath  output of Forge.toolpath.build
@@ -92,7 +102,7 @@
       L.push('; Spindle: ' + rpm + ' RPM (dial ' + makitaDial(rpm) +
         ')  -- INFO ONLY for manual router');
       L.push('; Feed: ' + s.feedCut + ' mm/min cut, ' + s.feedPlunge + ' mm/min plunge');
-      L.push('; Origin: FRONT-LEFT of stock, Z=0 on material top');
+      L.push('; Origin: ' + originLabel(s.originPosition) + ', Z=0 on material top');
       L.push('; Stock needed: ' + fmt(ctx.stockWidth) + ' x ' + fmt(ctx.stockHeight) + ' mm');
       L.push('; Machine envelope check: ' +
         (ctx.envelopeOk ? 'OK — job fits' : 'WARNING — job exceeds machine envelope'));
@@ -116,14 +126,16 @@
     L.push('');
 
     /* ---- operation body ---- */
+    // cx/cy/cz hold the last *emitted* coordinate, rounded to output
+    // precision, so float noise can never emit a redundant axis word.
     var cx = null, cy = null, cz = null;
+    function q(n) { var r = Math.round(n * 1000) / 1000; return r === 0 ? 0 : r; }
 
     function moveWords(m) {
       var w = '';
-      if (m.x != null && m.x !== cx) { w += ' X' + fmt(m.x); cx = m.x; }
-      if (m.y != null && m.y !== cy) { w += ' Y' + fmt(m.y); cy = m.y; }
-      var tz = m.z != null ? m.z + zOff : null;
-      if (tz != null && tz !== cz) { w += ' Z' + fmt(tz); cz = tz; }
+      if (m.x != null) { var rx = q(m.x); if (rx !== cx) { w += ' X' + rx; cx = rx; } }
+      if (m.y != null) { var ry = q(m.y); if (ry !== cy) { w += ' Y' + ry; cy = ry; } }
+      if (m.z != null) { var rz = q(m.z + zOff); if (rz !== cz) { w += ' Z' + rz; cz = rz; } }
       return w;
     }
 
@@ -136,12 +148,11 @@
           if (w) L.push('G0' + w);
         } else if (m.t === 'arc') {
           // endpoint must be stated explicitly for a full circle
-          var aw = '';
-          aw += ' X' + fmt(m.x); aw += ' Y' + fmt(m.y);
-          var az = m.z + zOff;
-          if (az !== cz) { aw += ' Z' + fmt(az); cz = az; }
+          var aw = ' X' + q(m.x) + ' Y' + q(m.y);
+          var rz = q(m.z + zOff);
+          if (rz !== cz) { aw += ' Z' + rz; cz = rz; }
           aw += ' I' + fmt(m.i) + ' J' + fmt(m.j);
-          cx = m.x; cy = m.y;
+          cx = q(m.x); cy = q(m.y);
           L.push((m.ccw ? 'G3' : 'G2') + aw + ' F' + Math.round(m.f));
         } else { // plunge or cut
           var cw = moveWords(m);
