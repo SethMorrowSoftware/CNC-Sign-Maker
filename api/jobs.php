@@ -36,6 +36,10 @@ function handle_jobs(string $method, ?int $id, ?string $action): void
 
         $filename = safe_gcode_name((string) ($body['filename'] ?? 'job.gcode'));
         $settings = $body['settings'] ?? [];
+        $settingsJson = json_encode($settings, JSON_UNESCAPED_SLASHES);
+        if ($settingsJson === false) {
+            json_response(['error' => 'settings contains invalid UTF-8'], 400);
+        }
         $svgHash  = substr((string) ($body['svg_hash'] ?? ''), 0, 64);
         $now      = time();
 
@@ -47,7 +51,7 @@ function handle_jobs(string $method, ?int $id, ?string $action): void
             ni($body['preset_id'] ?? null),
             $svgHash,
             '',
-            json_encode($settings, JSON_UNESCAPED_SLASHES),
+            $settingsJson,
             $now,
         ]);
         $jobId = (int) $db->lastInsertId();
@@ -80,9 +84,11 @@ function handle_jobs(string $method, ?int $id, ?string $action): void
         if (!$job['gcode_path'] || !is_file($path)) {
             json_response(['error' => 'Stored gcode file is missing'], 410);
         }
+        $downloadName = safe_gcode_name((string) ($job['filename'] ?? 'job.gcode'));
+
         http_response_code(200);
         header('Content-Type: text/plain; charset=utf-8');
-        header('Content-Disposition: attachment; filename="' . $job['filename'] . '"');
+        header('Content-Disposition: attachment; filename="' . $downloadName . '"');
         header('Content-Length: ' . filesize($path));
         readfile($path);
         exit;
