@@ -81,8 +81,12 @@ samples/                  Test SVGs (square, circle, holes plate, text)
 7. **Generate gcode**, review it, then download — or download an *air pass*
    (all Z raised 25 mm) to dry-run the toolpath first.
 
-The work origin is always the **front-left corner of the stock**, with
-**Z = 0 on top of the material**. The gcode header restates this on every file.
+By default the work origin is the **front-left corner of the stock**, with
+**Z = 0 on top of the material** — the recommended setup. The Geometry tab can
+move the origin to the centre, top-left or a custom point; with the centre or
+top-left origin the toolpath spans negative coordinates by design, so set the
+machine work zero at that point. The gcode header states the origin used on
+every file.
 
 ## Operations
 
@@ -152,6 +156,10 @@ GET                  health
   self-intersecting input may need manual review (flagged by the validator).
 - Manual tab placement (drag-on-canvas) is not yet implemented — tabs are
   evenly spaced.
+- Profile-out and profile-in offset *every* contour the same way. A part with
+  an interior window needs two operations — profile-out for the outer edge,
+  profile-in for the window — and the validator flags this when it sees nested
+  contours.
 - `<text>` elements are not rasterised; convert text to paths before export.
 - Arc *fitting* is not done — curves are emitted as tessellated polylines
   except for the drill-circle cycle, which uses true `G2`.

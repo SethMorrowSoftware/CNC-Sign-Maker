@@ -175,11 +175,53 @@
   /* ---- closed-path cutting ------------------------------------------- */
 
   /**
+   * Walk one full loop of a closed polygon, returning ordered { x, y, d }
+   * points (d = perimeter distance). When tabs are present, extra points are
+   * inserted at the tab ramp boundaries so the Z profile is reproduced
+   * exactly — without this, a tab that lands on a long straight edge between
+   * two polygon vertices would never be cut, because Z is only ever set at
+   * the vertices.
+   */
+  function perimeterWalk(poly, cum, total, tabs, ctx, rampDist) {
+    var n = poly.length, out = [], crit = [];
+    if (tabs && tabs.length && total > 1e-9) {
+      var half = ctx.tabWidth / 2;
+      var ramp = Math.max(0.5, Math.min(2.5, ctx.tabWidth));
+      tabs.forEach(function (tb) {
+        [-(half + ramp), -half, half, half + ramp].forEach(function (o) {
+          crit.push(((tb.dist + o) % total + total) % total);
+        });
+      });
+    }
+    // a point exactly at the helical ramp end lets the ramp finish on schedule
+    // and be recut at full depth, instead of stretching to the next vertex
+    if (rampDist > 1e-9 && rampDist < total) crit.push(rampDist);
+    for (var k = 1; k <= n; k++) {
+      var d0 = cum[k - 1], d1 = cum[k], seg = d1 - d0;
+      var a = poly[(k - 1) % n], b = poly[k % n];
+      if (seg > 1e-9 && crit.length) {
+        var inside = [];
+        for (var c = 0; c < crit.length; c++) {
+          if (crit[c] > d0 + 1e-6 && crit[c] < d1 - 1e-6) inside.push(crit[c]);
+        }
+        inside.sort(function (p, q) { return p - q; });
+        for (var s = 0; s < inside.length; s++) {
+          var t = (inside[s] - d0) / seg;
+          out.push({ x: a[0] + (b[0] - a[0]) * t,
+                     y: a[1] + (b[1] - a[1]) * t, d: inside[s] });
+        }
+      }
+      out.push({ x: b[0], y: b[1], d: d1 });
+    }
+    return out;
+  }
+
+  /**
    * Cut one closed polygon at `depth`. Handles tab lifts on the final pass
    * and helical (ramped) entry. Returns { moves, tabs }.
    */
   function cutClosed(poly, depth, ctx, isFinal) {
-    var moves = [], n = poly.length;
+    var moves = [];
     var tabs = (isFinal && ctx.applyTabs) ? placeTabs(poly, ctx) : [];
     var cum = G.cumulative(poly, true), total = cum[cum.length - 1];
     var helical = ctx.plungeStyle === 'helical';
@@ -191,28 +233,28 @@
     var zAt = function (d) {
       return tabs.length ? tabZAt(d, depth, tabs, ctx, total) : depth;
     };
+    var walk = perimeterWalk(poly, cum, total, tabs, ctx, rampDist);
 
     if (helical) {
       // ramp from pre-stock height down to depth over the first rampDist
-      moves.push({ t: 'cut', x: poly[0][0], y: poly[0][1], z: ctx.preStockZ, f: ctx.feedPlunge });
-      for (var i = 1; i <= n; i++) {
-        var d = cum[i], p = poly[i % n];
-        var z = d < rampDist
-          ? ctx.preStockZ + (d / rampDist) * (zAt(d) - ctx.preStockZ)
-          : zAt(d);
-        moves.push({ t: 'cut', x: p[0], y: p[1], z: z, f: ctx.feedCut });
-      }
+      moves.push({ t: 'cut', x: poly[0][0], y: poly[0][1],
+                   z: ctx.preStockZ, f: ctx.feedPlunge });
+      walk.forEach(function (p) {
+        var z = p.d < rampDist
+          ? ctx.preStockZ + (p.d / rampDist) * (zAt(p.d) - ctx.preStockZ)
+          : zAt(p.d);
+        moves.push({ t: 'cut', x: p.x, y: p.y, z: z, f: ctx.feedCut });
+      });
       // recut the ramped section at full depth
-      for (var j = 1; cum[j] < rampDist + 1e-6 && j <= n; j++) {
-        moves.push({ t: 'cut', x: poly[j % n][0], y: poly[j % n][1],
-                     z: zAt(cum[j]), f: ctx.feedCut });
+      for (var j = 0; j < walk.length && walk[j].d < rampDist + 1e-6; j++) {
+        moves.push({ t: 'cut', x: walk[j].x, y: walk[j].y,
+                     z: zAt(walk[j].d), f: ctx.feedCut });
       }
     } else {
-      descend(ctx.preStockZ, depth, ctx).forEach(function (m) { moves.push(m); });
-      for (var k = 1; k <= n; k++) {
-        var dk = cum[k], pk = poly[k % n];
-        moves.push({ t: 'cut', x: pk[0], y: pk[1], z: zAt(dk), f: ctx.feedCut });
-      }
+      descend(ctx.preStockZ, zAt(0), ctx).forEach(function (m) { moves.push(m); });
+      walk.forEach(function (p) {
+        moves.push({ t: 'cut', x: p.x, y: p.y, z: zAt(p.d), f: ctx.feedCut });
+      });
     }
     moves.push({ t: 'rapid', z: ctx.safeZ });
     return { moves: moves, tabs: tabs };
@@ -273,12 +315,10 @@
       // bit is as wide as / wider than the hole — plunge in place (oversized)
       moves.push({ t: 'rapid', x: c[0], y: c[1], z: ctx.safeZ });
       moves.push({ t: 'rapid', z: ctx.preStockZ });
-      var from = ctx.preStockZ;
       depths.forEach(function (depth) {
         moves.push({ t: 'plunge', x: c[0], y: c[1], z: depth, f: ctx.feedPlunge });
         var retract = Math.min(ctx.safeZ, depth + ctx.peckRetract);
         moves.push({ t: 'rapid', z: retract });
-        from = retract;
       });
       moves.push({ t: 'rapid', z: ctx.safeZ });
       return { kind: 'drill', color: OP_COLORS.drill, moves: moves, tabs: [],
@@ -330,7 +370,10 @@
         } else if (m.t === 'arc') {
           var r = Math.hypot(m.i, m.j);
           cut += 2 * Math.PI * r;
-          expand(nx - r, ny - r); expand(nx + r, ny + r);
+          // bound the circle around its centre (start point + I/J offset),
+          // not the arc endpoint
+          var acx = cx + m.i, acy = cy + m.j;
+          expand(acx - r, acy - r); expand(acx + r, acy + r);
         }
         cx = nx; cy = ny;
       });
