@@ -412,9 +412,14 @@
 
     // Concentric shells: the first cut runs a tool-radius in from the edge,
     // then step inward by ~45% of the tool diameter until nothing is left.
-    var stepover = Math.max(0.2, ctx.toolDiameter * 0.45);
+    var stepover = Math.max(0.35, ctx.toolDiameter * 0.45);
+    var maxShells = 700;
+    var maxShellPoints = 120000;
+    var shellPoints = 0;
     var shells = [], ring = G.offsetRegion(region, -ctx.toolDiameter / 2), guard = 0;
-    while (ring.length && guard++ < 5000) {
+    while (ring.length && guard++ < maxShells) {
+      for (var ri = 0; ri < ring.length; ri++) shellPoints += ring[ri].length;
+      if (shellPoints > maxShellPoints) break;
       shells.push(ring);
       ring = G.offsetRegion(ring, -stepover);
     }
@@ -436,8 +441,14 @@
         });
       }
     });
-    return { kind: 'pocket', color: OP_COLORS.pocket, moves: moves, tabs: [],
-             passes: depths.length };
+    return {
+      kind: 'pocket',
+      color: OP_COLORS.pocket,
+      moves: moves,
+      tabs: [],
+      passes: depths.length,
+      capped: !!ring.length
+    };
   }
 
   /* ---- V-carving ------------------------------------------------------ */
@@ -541,6 +552,12 @@
       var pocketed = pocketAll(job, ctx);
       if (pocketed && pocketed.moves && pocketed.moves.length) {
         ops.push(pocketed);
+        if (pocketed.capped) {
+          warnings.push(
+            'Pocket complexity was capped to keep the browser responsive. ' +
+            'Use a larger bit, increase scale tolerance, or split the job.'
+          );
+        }
       } else if (pocketed && pocketed.empty) {
         warnings.push('The closed shapes are too small to pocket with this bit.');
       }
