@@ -39,29 +39,52 @@
   <aside class="col col-left">
 
     <section class="card">
-      <h2>1 &middot; SVG file</h2>
-      <div id="dropzone" class="dropzone" tabindex="0" role="button"
-           aria-label="Upload an SVG file: drop a file here or activate to browse">
-        <input type="file" id="svg-input" accept=".svg,image/svg+xml" hidden>
-        <div class="dropzone-inner">
-          <strong>Drop an SVG here</strong>
-          <span>or click to browse</span>
-        </div>
+      <h2>1 &middot; Artwork</h2>
+      <div class="segmented seg-2" id="input-mode">
+        <button data-mode="text" class="active">Text sign</button>
+        <button data-mode="svg">Upload SVG</button>
       </div>
-      <div id="svg-info" class="svg-info hidden"></div>
-      <div class="sample-row">
-        <span class="muted-label">Samples:</span>
-        <button class="link-btn" data-sample="square.svg">square</button>
-        <button class="link-btn" data-sample="circle.svg">circle</button>
-        <button class="link-btn" data-sample="holes-plate.svg">holes plate</button>
-        <button class="link-btn" data-sample="text-sign.svg">text</button>
+
+      <div id="text-panel">
+        <label class="field">
+          <span>Sign text</span>
+          <textarea id="text-input" rows="2" spellcheck="false"
+                    placeholder="Type your sign text&hellip;"></textarea>
+        </label>
+        <label class="field">
+          <span>Font</span>
+          <select id="font-select"></select>
+        </label>
+        <div class="form-grid" id="form-text"></div>
+        <button class="btn btn-block" id="font-upload-btn">Upload a font&hellip;</button>
+        <input type="file" id="font-input" accept=".ttf,.otf,.woff" hidden>
+      </div>
+
+      <div id="svg-panel" class="hidden">
+        <div id="dropzone" class="dropzone" tabindex="0" role="button"
+             aria-label="Upload an SVG file: drop a file here or activate to browse">
+          <input type="file" id="svg-input" accept=".svg,image/svg+xml" hidden>
+          <div class="dropzone-inner">
+            <strong>Drop an SVG here</strong>
+            <span>or click to browse</span>
+          </div>
+        </div>
+        <div id="svg-info" class="svg-info hidden"></div>
+        <div class="sample-row">
+          <span class="muted-label">Samples:</span>
+          <button class="link-btn" data-sample="square.svg">square</button>
+          <button class="link-btn" data-sample="circle.svg">circle</button>
+          <button class="link-btn" data-sample="holes-plate.svg">holes plate</button>
+          <button class="link-btn" data-sample="text-sign.svg">text</button>
+        </div>
       </div>
     </section>
 
     <section class="card">
       <h2>2 &middot; Operation</h2>
-      <div class="segmented" id="operation-picker">
+      <div class="segmented seg-ops" id="operation-picker">
         <button data-op="engrave" class="active">Engrave</button>
+        <button data-op="pocket">Pocket</button>
         <button data-op="profile-out">Profile&nbsp;out</button>
         <button data-op="profile-in">Profile&nbsp;in</button>
         <button data-op="drill">Drill</button>
@@ -220,8 +243,10 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script src="js/lib/clipper.js"></script>
+<script src="js/lib/opentype.js"></script>
 <script src="js/geometry.js"></script>
 <script src="js/svg-parser.js"></script>
+<script src="js/text-geometry.js"></script>
 <script src="js/toolpath.js"></script>
 <script src="js/gcode-emitter.js"></script>
 <script src="js/validation.js"></script>
