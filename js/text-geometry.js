@@ -150,9 +150,13 @@
       // centre the scaled text block inside the interior
       var tx = ix + (iW - tw * s) / 2 - box.x1 * s;
       var ty = iy + (iH - th * s) / 2 - box.y1 * s;
+      // opentype emits glyph contours without an explicit close command — add
+      // a Z to each so every subpath reads as a closed polygon downstream.
+      var d = combined.toPathData(3).split('M')
+        .filter(function (seg) { return seg.length; })
+        .map(function (seg) { return 'M' + seg + 'Z'; }).join('');
       parts.push('<g transform="translate(' + round(tx) + ',' + round(ty) +
-        ') scale(' + round(s) + ')"><path d="' + combined.toPathData(3) +
-        '"/></g>');
+        ') scale(' + round(s) + ')"><path d="' + d + '"/></g>');
     }
     if (!parts.length) {
       throw new Error('Enter sign text, or enable the frame, to generate geometry.');
