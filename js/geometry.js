@@ -163,6 +163,67 @@
     return result;
   }
 
+  /* ---- multi-contour region operations (pockets, v-carve) ------------ */
+
+  /**
+   * Normalise a set of closed contours into a clean filled region using the
+   * even-odd rule, so nested counters (the hole in an 'O', 'A', 'e') read as
+   * holes rather than separate islands. Returns millimetre point arrays with
+   * Clipper-canonical winding (outer and hole orientations consistent), ready
+   * to feed straight back into offsetRegion.
+   */
+  function cleanRegion(contours) {
+    var C = clipper();
+    var cl = new C.Clipper();
+    var added = 0;
+    for (var i = 0; i < contours.length; i++) {
+      if (contours[i] && contours[i].length >= 3) {
+        cl.AddPath(toClipper(contours[i]), C.PolyType.ptSubject, true);
+        added++;
+      }
+    }
+    if (!added) return [];
+    var solution = new C.Paths();
+    cl.Execute(C.ClipType.ctUnion, solution,
+      C.PolyFillType.pftEvenOdd, C.PolyFillType.pftEvenOdd);
+    var out = [];
+    for (var k = 0; k < solution.length; k++) {
+      if (solution[k].length >= 3) out.push(fromClipper(solution[k]));
+    }
+    return out;
+  }
+
+  /**
+   * Offset a whole region (a set of canonical contours, holes included) by
+   * `delta` millimetres. Negative shrinks the filled area inward — the basis
+   * of pocket clearing and V-carve shells. Returns the resulting contours;
+   * an inward offset can split, merge or empty the region.
+   */
+  function offsetRegion(paths, delta, opts) {
+    opts = opts || {};
+    var C = clipper();
+    var clip = [];
+    for (var i = 0; i < paths.length; i++) {
+      if (paths[i] && paths[i].length >= 3) clip.push(toClipper(paths[i]));
+    }
+    if (!clip.length) return [];
+    if (Math.abs(delta) < 1e-6) {
+      return clip.map(fromClipper);
+    }
+    var jt = C.JoinType.jtRound;
+    if (opts.joinType === 'miter') jt = C.JoinType.jtMiter;
+    else if (opts.joinType === 'square') jt = C.JoinType.jtSquare;
+    var co = new C.ClipperOffset(opts.miterLimit || 2.0, 0.05 * SCALE);
+    co.AddPaths(clip, jt, C.EndType.etClosedPolygon);
+    var solution = new C.Paths();
+    co.Execute(solution, delta * SCALE);
+    var out = [];
+    for (var k = 0; k < solution.length; k++) {
+      if (solution[k].length >= 3) out.push(fromClipper(solution[k]));
+    }
+    return out;
+  }
+
   Forge.geometry = {
     SCALE: SCALE,
     area: area,
@@ -174,7 +235,9 @@
     ensureWinding: ensureWinding,
     cumulative: cumulative,
     pointAtDistance: pointAtDistance,
-    offset: offset
+    offset: offset,
+    cleanRegion: cleanRegion,
+    offsetRegion: offsetRegion
   };
 })(typeof window !== 'undefined' ? (window.Forge = window.Forge || {})
                                  : (global.Forge = global.Forge || {}));
