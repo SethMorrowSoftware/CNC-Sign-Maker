@@ -41,8 +41,8 @@
     <section class="card">
       <h2>1 &middot; Artwork</h2>
       <div class="segmented seg-2" id="input-mode">
-        <button data-mode="text" class="active">Text sign</button>
-        <button data-mode="svg">Upload SVG</button>
+        <button data-mode="text" class="active" aria-pressed="true">Text sign</button>
+        <button data-mode="svg" aria-pressed="false">Upload SVG</button>
       </div>
 
       <div id="text-panel">
@@ -121,7 +121,7 @@
     <section class="card validation-card">
       <h2>Pre-flight checks</h2>
       <ul id="validation-list" class="validation-list" aria-live="polite">
-        <li class="vi vi-info">Upload an SVG to begin.</li>
+        <li class="vi vi-info">Load artwork to begin (text sign or SVG).</li>
       </ul>
     </section>
 
