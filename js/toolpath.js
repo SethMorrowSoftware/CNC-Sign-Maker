@@ -14,9 +14,12 @@
   var G = Forge.geometry;
   var OP_COLORS = {
     engrave: '#16a34a', 'profile-out': '#2563eb',
-    'profile-in': '#c026d3', drill: '#ea580c', pocket: '#0d9488'
+    'profile-in': '#c026d3', drill: '#ea580c', pocket: '#0d9488',
+    vcarve: '#7c3aed'
   };
-  var OP_ORDER = { drill: 0, 'profile-in': 1, engrave: 2, pocket: 2, 'profile-out': 3 };
+  var OP_ORDER = {
+    drill: 0, 'profile-in': 1, engrave: 2, pocket: 2, vcarve: 2, 'profile-out': 3
+  };
 
   /* ---- job-space transform ------------------------------------------- */
 
@@ -403,9 +406,7 @@
       if (sp.closed && sp.points && sp.points.length >= 3) contours.push(sp.points);
     });
     if (!contours.length) return null;
-    if (!(ctx.toolDiameter > 0)) {
-      throw new Error('Pocket clearing needs a bit with a cutting diameter.');
-    }
+    if (!(ctx.toolDiameter > 0)) return null;   // validation explains why
     var region = G.cleanRegion(contours);
     if (!region.length) return null;
 
@@ -439,6 +440,61 @@
              passes: depths.length };
   }
 
+  /* ---- V-carving ------------------------------------------------------ */
+
+  /**
+   * V-carve every filled region. The region boundary is eroded inward in
+   * small steps; each ring is cut at a depth set by the V-bit's half-angle
+   * (depth = inset / tan(halfAngle)), so the bit's flanks meet the surface
+   * exactly on the design outline and form a continuous V. Depth is capped
+   * at |finalDepth| — wider areas flatten there (true 2-color HDPE behaviour),
+   * and once flat the bottom is cleared at a coarser step. Returns one
+   * whole-job operation, or null when it cannot run (validation explains why).
+   */
+  function vcarveAll(job, ctx) {
+    var contours = [];
+    job.subpaths.forEach(function (sp) {
+      if (sp.closed && sp.points && sp.points.length >= 3) contours.push(sp.points);
+    });
+    if (!contours.length) return null;
+    if (!(ctx.vAngle > 0 && ctx.vAngle < 180)) return null;
+    var tanHalf = Math.tan((ctx.vAngle / 2) * Math.PI / 180);
+    if (!(tanHalf > 1e-4)) return null;
+    var region = G.cleanRegion(contours);
+    if (!region.length) return null;
+
+    var xyStep = 0.4;                          // ring spacing on the V flanks
+    var maxDepth = Math.abs(ctx.finalDepth);   // depth cap — wider areas flatten
+    var insetCap = maxDepth * tanHalf;         // inset at which depth hits the cap
+    // a V-bit only cuts at its tip once the bottom is flat, so clear that
+    // region at a coarser step to keep the toolpath a sane size
+    var flatStep = Math.max(xyStep, 2 * maxDepth * tanHalf * 0.4);
+
+    var moves = [], deepest = 0, inset = 0, rings = 0, guard = 0;
+    ctx.applyTabs = false;
+    var ring = region;
+    while (guard++ < 8000) {
+      var step = inset < insetCap ? xyStep : flatStep;
+      inset += step;
+      ring = G.offsetRegion(ring, -step);
+      if (!ring.length) break;
+      var depth = -Math.min(inset / tanHalf, maxDepth);
+      if (-depth > deepest) deepest = -depth;
+      rings++;
+      ring.forEach(function (contour) {
+        cutClosed(contour, depth, ctx, false).moves.forEach(function (m) {
+          moves.push(m);
+        });
+      });
+    }
+    if (!moves.length) {
+      return { kind: 'vcarve', color: OP_COLORS.vcarve, moves: [], tabs: [],
+               empty: true };
+    }
+    return { kind: 'vcarve', color: OP_COLORS.vcarve, moves: moves, tabs: [],
+             passes: rings, depthReached: deepest };
+  }
+
   /* ---- public build --------------------------------------------------- */
 
   /**
@@ -467,6 +523,7 @@
       peckStep: Math.max(0.8, s.docPerPass || 2),
       toolOffset: toolOffset,
       toolDiameter: bitD,
+      vAngle: bit && bit.v_angle_deg > 0 ? bit.v_angle_deg : 0,
       targetHoleDiameter: s.targetHoleDiameter || 0,
       tabsEnabled: !!s.tabsEnabled,
       tabCount: s.tabCount || 4,
@@ -479,19 +536,26 @@
     var op = s.operation || 'engrave';
     var ops = [], warnings = [], openSkipped = 0;
 
-    // Pocket is a whole-job operation — every closed region is cleared at once.
+    // Pocket and V-carve are whole-job operations — every closed region at once.
     if (op === 'pocket') {
       var pocketed = pocketAll(job, ctx);
-      if (pocketed && !pocketed.empty && pocketed.moves.length) {
+      if (pocketed && pocketed.moves && pocketed.moves.length) {
         ops.push(pocketed);
-      } else {
-        warnings.push('Nothing to pocket — pocket clearing needs closed shapes ' +
-          'large enough for this bit.');
+      } else if (pocketed && pocketed.empty) {
+        warnings.push('The closed shapes are too small to pocket with this bit.');
+      }
+    } else if (op === 'vcarve') {
+      var carved = vcarveAll(job, ctx);
+      if (carved && carved.moves && carved.moves.length) {
+        ops.push(carved);
+      } else if (carved && carved.empty) {
+        warnings.push('The shapes are too small to V-carve with this bit.');
       }
     }
 
     job.subpaths.forEach(function (sub) {
-      if (op === 'pocket' || !sub.points || sub.points.length < 2) return;
+      if (op === 'pocket' || op === 'vcarve' ||
+          !sub.points || sub.points.length < 2) return;
       var built = null;
 
       if (op === 'engrave') {
