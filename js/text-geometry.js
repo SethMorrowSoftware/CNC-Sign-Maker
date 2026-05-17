@@ -27,7 +27,32 @@
     { key: 'archivo-black', name: 'Archivo Black — heavy', file: 'fonts/archivo-black.woff' },
     { key: 'roboto-slab',   name: 'Roboto Slab — slab',    file: 'fonts/roboto-slab.woff' },
     { key: 'merriweather',  name: 'Merriweather — serif',  file: 'fonts/merriweather.woff' },
-    { key: 'pacifico',      name: 'Pacifico — script',     file: 'fonts/pacifico.woff' }
+    { key: 'pacifico',      name: 'Pacifico — script',     file: 'fonts/pacifico.woff' },
+
+    { key: 'anton',         name: 'Anton — bold sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/anton/Anton-Regular.ttf' },
+    { key: 'bangers',       name: 'Bangers — comic display', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/bangers/Bangers-Regular.ttf' },
+    { key: 'bebas-neue',    name: 'Bebas Neue — tall display', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/BebasNeue-Regular.ttf' },
+    { key: 'caveat',        name: 'Caveat — handwritten', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/caveat/Caveat-Regular.ttf' },
+    { key: 'comfortaa',     name: 'Comfortaa — rounded sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/comfortaa/Comfortaa-Regular.ttf' },
+    { key: 'dm-serif-display', name: 'DM Serif Display — classic serif', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/dmserifdisplay/DMSerifDisplay-Regular.ttf' },
+    { key: 'fira-sans',     name: 'Fira Sans — humanist sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/firasans/FiraSans-Regular.ttf' },
+    { key: 'great-vibes',   name: 'Great Vibes — formal script', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/greatvibes/GreatVibes-Regular.ttf' },
+    { key: 'josefin-sans',  name: 'Josefin Sans — vintage sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/josefinsans/JosefinSans-Regular.ttf' },
+    { key: 'lobster',       name: 'Lobster — script', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/lobster/Lobster-Regular.ttf' },
+    { key: 'nunito',        name: 'Nunito — rounded sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/nunito/Nunito-Regular.ttf' },
+    { key: 'orbitron',      name: 'Orbitron — techno sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orbitron-Regular.ttf' },
+    { key: 'playfair-display', name: 'Playfair Display — elegant serif', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/PlayfairDisplay-Regular.ttf' },
+    { key: 'pt-serif',      name: 'PT Serif — book serif', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/ptserif/PTSerif-Regular.ttf' },
+    { key: 'quicksand',     name: 'Quicksand — soft sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/quicksand/Quicksand-Regular.ttf' },
+    { key: 'raleway',       name: 'Raleway — geometric sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/raleway/Raleway-Regular.ttf' },
+    { key: 'rubik',         name: 'Rubik — modern sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/rubik/Rubik-Regular.ttf' },
+    { key: 'teko',          name: 'Teko — industrial condensed', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/teko/Teko-Regular.ttf' },
+    { key: 'amatic-sc',     name: 'Amatic SC — hand-lettered', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/amaticsc/AmaticSC-Regular.ttf' },
+    { key: 'alegreya',      name: 'Alegreya — literary serif', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/alegreya/Alegreya-Regular.ttf' },
+    { key: 'barlow-condensed', name: 'Barlow Condensed — narrow sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/barlowcondensed/BarlowCondensed-Regular.ttf' },
+    { key: 'cinzel',        name: 'Cinzel — roman capitals', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel-Regular.ttf' },
+    { key: 'fredoka',       name: 'Fredoka — playful sans', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/fredoka/Fredoka-Regular.ttf' },
+    { key: 'abril-fatface', name: 'Abril Fatface — display serif', file: 'https://raw.githubusercontent.com/google/fonts/main/ofl/abrilfatface/AbrilFatface-Regular.ttf' }
   ];
 
   var cache = {};      // key -> parsed Font
