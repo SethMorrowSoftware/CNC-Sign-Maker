@@ -95,7 +95,9 @@
       L.push('; ====== ' + tokens.job + ' ======');
       L.push('; Material: ' + tokens.material);
       L.push('; Bit: ' + tokens.bit +
-        (ctx.bit ? ' (' + ctx.bit.diameter_mm + 'mm, ' + ctx.bit.type + ')' : ''));
+        (ctx.bit ? ' (' + ctx.bit.diameter_mm + 'mm, ' + ctx.bit.type +
+          (ctx.bit.v_angle_deg > 0 ? ', ' + ctx.bit.v_angle_deg + ' deg' : '') +
+          ')' : ''));
       L.push('; Operation: ' + tokens.operation);
       L.push('; Final depth: ' + s.finalDepth + 'mm   DOC: ' + s.docPerPass +
         'mm x ' + depths.length + ' passes');

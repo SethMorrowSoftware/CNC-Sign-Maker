@@ -24,6 +24,13 @@
     var needsBit = op !== 'engrave';
     var finalDepth = s.finalDepth != null ? s.finalDepth : -1;
     var b = toolpath.stats && toolpath.stats.bounds ? toolpath.stats.bounds : null;
+    // V-carve depth comes from the geometry, not finalDepth — check the bit
+    // against the depth the toolpath actually reaches.
+    var vcarveOp = (toolpath.ops || []).filter(function (o) {
+      return o.kind === 'vcarve';
+    })[0];
+    var reachDepth = (op === 'vcarve' && vcarveOp && vcarveOp.depthReached != null)
+      ? -vcarveOp.depthReached : finalDepth;
 
     /* --- final depth must be below the surface --- */
     if (finalDepth >= 0) {
@@ -73,12 +80,12 @@
       }
     }
 
-    /* --- bit reach vs final depth (spec §10, gotcha 7) --- */
+    /* --- bit reach vs cut depth (spec §10, gotcha 7) --- */
     if (bit && bit.cutting_length_mm > 0) {
-      if (Math.abs(finalDepth) + 2 >= bit.cutting_length_mm) {
-        add('error', 'Final depth ' + finalDepth + 'mm needs more reach than the bit has ' +
-          '(cutting length ' + bit.cutting_length_mm + 'mm, 2mm safety margin). ' +
-          'Use a longer bit or a shallower cut.');
+      if (Math.abs(reachDepth) + 2 >= bit.cutting_length_mm) {
+        add('error', 'Cut depth ' + fmt(reachDepth) + 'mm needs more reach than the ' +
+          'bit has (cutting length ' + bit.cutting_length_mm + 'mm, 2mm safety ' +
+          'margin). Use a longer bit or a shallower cut.');
       }
     } else if (needsBit) {
       add('info', 'Selected bit has no cutting-length recorded — depth-vs-reach ' +
@@ -89,6 +96,13 @@
     if (needsBit && (!bit || !(bit.diameter_mm > 0))) {
       add('error', 'Select a bit — "' + op + '" needs the cutting diameter for ' +
         'tool-radius compensation.');
+    }
+
+    /* --- V-carve needs a V-bit with an included angle --- */
+    if (op === 'vcarve' && bit && bit.diameter_mm > 0 &&
+        !(bit.v_angle_deg > 0 && bit.v_angle_deg < 180)) {
+      add('error', 'V-carving needs a V-bit with an included angle. Pick a V-bit, ' +
+        'or set the V-bit angle on the Bit tab.');
     }
 
     /* --- stock margin vs tool offset (spec §10) --- */
