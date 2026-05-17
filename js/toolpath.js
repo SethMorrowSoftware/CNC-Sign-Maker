@@ -14,9 +14,9 @@
   var G = Forge.geometry;
   var OP_COLORS = {
     engrave: '#16a34a', 'profile-out': '#2563eb',
-    'profile-in': '#c026d3', drill: '#ea580c'
+    'profile-in': '#c026d3', drill: '#ea580c', pocket: '#0d9488'
   };
-  var OP_ORDER = { drill: 0, 'profile-in': 1, engrave: 2, 'profile-out': 3 };
+  var OP_ORDER = { drill: 0, 'profile-in': 1, engrave: 2, pocket: 2, 'profile-out': 3 };
 
   /* ---- job-space transform ------------------------------------------- */
 
@@ -389,6 +389,56 @@
     };
   }
 
+  /* ---- pocket clearing ------------------------------------------------ */
+
+  /**
+   * Clear the inside of every filled region (filled text, solid shapes) with
+   * concentric inward shells. Counters — the holes inside letters like O, A,
+   * e — are preserved automatically because cleanRegion normalises the input
+   * with the even-odd rule. Returns one whole-job operation.
+   */
+  function pocketAll(job, ctx) {
+    var contours = [];
+    job.subpaths.forEach(function (sp) {
+      if (sp.closed && sp.points && sp.points.length >= 3) contours.push(sp.points);
+    });
+    if (!contours.length) return null;
+    if (!(ctx.toolDiameter > 0)) {
+      throw new Error('Pocket clearing needs a bit with a cutting diameter.');
+    }
+    var region = G.cleanRegion(contours);
+    if (!region.length) return null;
+
+    // Concentric shells: the first cut runs a tool-radius in from the edge,
+    // then step inward by ~45% of the tool diameter until nothing is left.
+    var stepover = Math.max(0.2, ctx.toolDiameter * 0.45);
+    var shells = [], ring = G.offsetRegion(region, -ctx.toolDiameter / 2), guard = 0;
+    while (ring.length && guard++ < 5000) {
+      shells.push(ring);
+      ring = G.offsetRegion(ring, -stepover);
+    }
+    if (!shells.length) {
+      return { kind: 'pocket', color: OP_COLORS.pocket, moves: [], tabs: [],
+               empty: true };
+    }
+
+    var depths = computeDepths(ctx.finalDepth, ctx.docPerPass);
+    var moves = [];
+    ctx.applyTabs = false;
+    depths.forEach(function (depth) {
+      // inner shells first, so the visible edge shell is cut last and clean
+      for (var si = shells.length - 1; si >= 0; si--) {
+        shells[si].forEach(function (contour) {
+          cutClosed(contour, depth, ctx, false).moves.forEach(function (m) {
+            moves.push(m);
+          });
+        });
+      }
+    });
+    return { kind: 'pocket', color: OP_COLORS.pocket, moves: moves, tabs: [],
+             passes: depths.length };
+  }
+
   /* ---- public build --------------------------------------------------- */
 
   /**
@@ -429,8 +479,19 @@
     var op = s.operation || 'engrave';
     var ops = [], warnings = [], openSkipped = 0;
 
+    // Pocket is a whole-job operation — every closed region is cleared at once.
+    if (op === 'pocket') {
+      var pocketed = pocketAll(job, ctx);
+      if (pocketed && !pocketed.empty && pocketed.moves.length) {
+        ops.push(pocketed);
+      } else {
+        warnings.push('Nothing to pocket — pocket clearing needs closed shapes ' +
+          'large enough for this bit.');
+      }
+    }
+
     job.subpaths.forEach(function (sub) {
-      if (!sub.points || sub.points.length < 2) return;
+      if (op === 'pocket' || !sub.points || sub.points.length < 2) return;
       var built = null;
 
       if (op === 'engrave') {

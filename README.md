@@ -1,8 +1,11 @@
 # LowRider Forge
 
-A self-hosted web tool that converts SVG files into FluidNC-compatible gcode
-for the **LowRider v4** CNC. Built for engraving and cutting signs, fixtures
-and parts with predictable, repeatable output.
+A self-hosted web tool that turns **typed text or SVG files** into
+FluidNC-compatible gcode for the **LowRider v4** CNC. Built for engraving and
+cutting signs, fixtures and parts with predictable, repeatable output.
+
+Make a sign straight from the built-in **text sign generator** — pick a font,
+set the sign size, type the text — or upload an SVG of your own artwork.
 
 All geometry and gcode generation runs **client-side** in the browser — the
 PHP backend only stores bits, materials, presets and (optionally) finished
@@ -52,25 +55,31 @@ css/styles.css           Theme
 js/
   app.js                 State, form generation, event wiring
   svg-parser.js           SVG -> millimetre geometry (transforms, units, curves)
+  text-geometry.js        Typed text + font -> sign geometry
   geometry.js             Polygon offsetting (Clipper) + geometry helpers
-  toolpath.js             Operation toolpaths (engrave/profile/drill)
+  toolpath.js             Operation toolpaths (engrave/pocket/profile/drill)
   gcode-emitter.js        Toolpath -> FluidNC gcode
   preview.js              Canvas rendering, pan/zoom, hover
   validation.js           Pre-flight safety checks
   presets.js              API client + LocalStorage autosave
   lib/clipper.js          Vendored Clipper 6.4.2 (Boost license)
+  lib/opentype.js         Vendored opentype.js (MIT) — reads font outlines
 api/
   index.php               Router
   db.php                  SQLite schema, seed data, helpers
   bits.php / materials.php / presets.php / jobs.php
 data/                     SQLite database + saved jobs (created at runtime)
+fonts/                    Bundled open-licensed sign fonts (+ their licenses)
 samples/                  Test SVGs (square, circle, holes plate, text)
 ```
 
 ## Workflow
 
-1. **Upload an SVG** (drag-and-drop, browse, or load a sample).
-2. **Pick the operation** — engrave, profile-out, profile-in or drill.
+Start from **typed text** or an **SVG file** — use the switch at the top of the
+artwork panel.
+
+1. **Type your sign text** (choose a font and sign size), or **upload an SVG**.
+2. **Pick the operation** — engrave, pocket, profile-out, profile-in or drill.
 3. **Choose material and bit.** Selecting a material auto-fills the
    recommended feeds, DOC and depth.
 4. **Tune settings** in the right-hand tabs (Operation, Tabs, Geometry,
@@ -88,11 +97,26 @@ top-left origin the toolpath spans negative coordinates by design, so set the
 machine work zero at that point. The gcode header states the origin used on
 every file.
 
+## Text signs
+
+The text generator lays out your text in a chosen font and feeds it into the
+same toolpath pipeline as an SVG. Six fonts ship with the tool (sans,
+condensed, heavy, slab, serif and script); you can also upload your own
+`.ttf` / `.otf`. For lettering:
+
+- **Outline** — pick the *Engrave* operation to trace each letter's outline.
+- **Filled** — pick the *Pocket* operation to clear each letter solid.
+
+Set a letter height, or let the text auto-fit the sign, and optionally cut a
+frame border. Cutting the sign blank to its outside size is a separate job —
+use a pre-cut blank, or profile-out a rectangle.
+
 ## Operations
 
 | Operation    | What it does |
 |--------------|--------------|
-| Engrave      | Traces the path centerline at one depth. No tool compensation. |
+| Engrave      | Traces the path centerline at one depth. No tool compensation. Outline lettering for text. |
+| Pocket       | Clears the inside of every closed shape with concentric passes — solid, filled lettering. Counters (the holes in O, A, e) are kept. |
 | Profile out  | Cuts outside a closed path (tool radius + finishing). Multi-depth, tabs on the final pass. |
 | Profile in   | Cuts inside a closed path — pockets and openings. Multi-depth. |
 | Drill        | Plunge or helical-bore each closed feature. Holes smaller than the bit are plunge-drilled oversized. |

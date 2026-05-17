@@ -23,11 +23,20 @@
     machineX: 1270, machineY: 2540, safeZ: 10, preStockZ: 2,
     rapidFeed: 5000, useM0: false, spindleRpm: 18000,
     filenamePattern: '{job}_{material}_{bit}_{date}.gcode',
-    headerTemplate: '', jobName: 'job'
+    headerTemplate: '', jobName: 'job',
+    inputMode: 'text',
+    textContent: 'SIGN', fontKey: 'montserrat',
+    signWidth: 300, signHeight: 150,
+    fitToSign: true, letterHeight: 60,
+    textAlign: 'center', lineSpacing: 1.1, letterSpacing: 0,
+    frame: false, frameInset: 8, textPadding: 12
   };
 
   var OP_HINTS = {
-    engrave: 'Traces the path centerline at a single depth. No tool compensation.',
+    engrave: 'Traces the path centerline at a single depth. No tool compensation. ' +
+      'For text this gives outline lettering.',
+    pocket: 'Clears the inside of every closed shape — solid, filled lettering. ' +
+      'Counters (the holes in O, A, e) are kept.',
     'profile-out': 'Cuts outside the path (tool radius + finishing). Multi-depth, ' +
       'tabs on the final pass. Small features are drilled.',
     'profile-in': 'Cuts inside the path — pockets and opening cutouts. Multi-depth.',
@@ -145,13 +154,36 @@
     { key: 'notes', label: 'Notes', type: 'textarea' }
   ];
 
+  var TEXT_SCHEMA = [
+    { key: 'signWidth', label: 'Sign width', type: 'number', step: 5, min: 10, unit: 'mm' },
+    { key: 'signHeight', label: 'Sign height', type: 'number', step: 5, min: 10, unit: 'mm' },
+    { key: 'fitToSign', label: 'Fit text to sign', type: 'checkbox',
+      hint: 'Scale the text to fill the sign automatically.' },
+    { key: 'letterHeight', label: 'Letter height', type: 'number', step: 1, min: 1,
+      unit: 'mm', hint: 'Capital-letter height.',
+      dependsOn: { key: 'fitToSign', value: false } },
+    { key: 'textAlign', label: 'Alignment', type: 'select', options: opts([
+      { value: 'left', label: 'Left' }, { value: 'center', label: 'Center' },
+      { value: 'right', label: 'Right' }]) },
+    { key: 'lineSpacing', label: 'Line spacing', type: 'number', step: 0.05, min: 0.5,
+      unit: '×', hint: 'Gap between lines, as a multiple.' },
+    { key: 'letterSpacing', label: 'Letter spacing', type: 'number', step: 1, unit: '%',
+      hint: 'Extra space between letters.' },
+    { key: 'frame', label: 'Cut a frame border', type: 'checkbox' },
+    { key: 'frameInset', label: 'Frame inset', type: 'number', step: 1, min: 0, unit: 'mm',
+      hint: 'Distance of the frame from the sign edge.',
+      dependsOn: { key: 'frame', value: true } },
+    { key: 'textPadding', label: 'Text padding', type: 'number', step: 1, min: 0, unit: 'mm',
+      hint: 'Gap between the text and the sign or frame edge.' }
+  ];
+
   /* ---- state ---------------------------------------------------------- */
   var state = {
     settings: Object.assign({}, DEFAULTS),
     geometry: null, job: null, toolpath: null, validation: null,
     svgText: null, svgName: null, svgHash: null,
     bits: [], materials: [], presets: [],
-    bit: null, material: null,
+    bit: null, material: null, font: null,
     serverUp: false
   };
   var preview = null;
@@ -325,6 +357,106 @@
       return;
     }
     recomputeNow();
+  }
+
+  /* ---- text sign generator ------------------------------------------- */
+  function populateFontSelect() {
+    var sel = $('#font-select');
+    if (!sel) return;
+    sel.innerHTML = '';
+    Forge.textGeometry.FONTS.forEach(function (f) {
+      var o = el('option', null, f.name);
+      o.value = f.key;
+      sel.appendChild(o);
+    });
+    sel.value = state.settings.fontKey;
+  }
+
+  function rebuildTextNow() {
+    if (state.settings.inputMode !== 'text') return;
+    if (!state.font) { recomputeNow(); return; }   // font still loading
+    try {
+      state.geometry = Forge.textGeometry.build({
+        text: state.settings.textContent,
+        font: state.font,
+        signWidthMm: state.settings.signWidth,
+        signHeightMm: state.settings.signHeight,
+        letterHeightMm: state.settings.letterHeight,
+        fitToSign: state.settings.fitToSign,
+        align: state.settings.textAlign,
+        lineSpacing: state.settings.lineSpacing,
+        letterSpacingPct: state.settings.letterSpacing,
+        border: state.settings.frame,
+        borderInsetMm: state.settings.frameInset,
+        paddingMm: state.settings.textPadding,
+        tessellationTolerance: state.settings.tessellationTolerance
+      });
+    } catch (e) {
+      state.geometry = null;
+      recomputeNow();
+      toast(e.message, 'warn');
+      return;
+    }
+    state.svgHash = hashString(state.settings.textContent + '|' + state.settings.fontKey);
+    $('#preview-empty').classList.add('hidden');
+    recomputeNow();
+  }
+  var rebuildText = debounce(rebuildTextNow, 110);
+
+  function loadFontThen(cb) {
+    Forge.textGeometry.loadFont(state.settings.fontKey).then(function (font) {
+      state.font = font;
+      if (cb) cb();
+    }).catch(function (e) {
+      // an uploaded font is lost on reload — fall back to a bundled one
+      if (state.settings.fontKey !== DEFAULTS.fontKey) {
+        state.settings.fontKey = DEFAULTS.fontKey;
+        var fs = $('#font-select'); if (fs) fs.value = DEFAULTS.fontKey;
+        loadFontThen(cb);
+      } else {
+        toast('Could not load font: ' + e.message, 'error');
+      }
+    });
+  }
+
+  function regenerate() {
+    if (state.settings.inputMode === 'text') rebuildTextNow();
+    else reparseAndRecompute();
+  }
+
+  function switchInputMode(mode) {
+    state.settings.inputMode = mode;
+    Array.prototype.forEach.call($('#input-mode').children, function (b) {
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
+    $('#text-panel').classList.toggle('hidden', mode !== 'text');
+    $('#svg-panel').classList.toggle('hidden', mode === 'text');
+    if (mode === 'text') {
+      if (state.font) { rebuildTextNow(); preview.fit(); }
+      else loadFontThen(function () { rebuildTextNow(); preview.fit(); });
+    } else {
+      reparseAndRecompute();
+      if (state.geometry) preview.fit();
+    }
+  }
+
+  function onFontUpload(file) {
+    if (!file) return;
+    var fr = new FileReader();
+    fr.onload = function () {
+      try {
+        var added = Forge.textGeometry.addUploadedFont(
+          file.name.replace(/\.(ttf|otf|woff)$/i, ''), fr.result);
+        state.settings.fontKey = added.key;
+        populateFontSelect();
+        loadFontThen(rebuildTextNow);
+        toast('Font "' + added.name + '" added.');
+      } catch (e) {
+        toast('Could not read that font file: ' + e.message, 'error');
+      }
+    };
+    fr.onerror = function () { toast('Could not read the font file.', 'error'); };
+    fr.readAsArrayBuffer(file);
   }
 
   /* ---- validation panel ---------------------------------------------- */
@@ -537,7 +669,11 @@
     syncForm(forms.tabs, SCHEMA.tabs, getSetting);
     syncForm(forms.geometry, SCHEMA.geometry, getSetting);
     syncForm(forms.machine, SCHEMA.machine, getSetting);
+    syncForm(forms.text, TEXT_SCHEMA, getSetting);
     refreshVisibility(forms.geometry, SCHEMA.geometry, state.settings);
+    refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
+    var ti = $('#text-input'); if (ti) ti.value = state.settings.textContent;
+    var fs = $('#font-select'); if (fs) fs.value = state.settings.fontKey;
     setOperationUI(state.settings.operation);
   }
 
@@ -639,7 +775,7 @@
     if (p.bit_id) selectBit(p.bit_id);
     if (p.material_id) selectMaterial(p.material_id, false);
     syncAllForms();
-    reparseAndRecompute();
+    switchInputMode(state.settings.inputMode || 'text');
     toast('Preset "' + p.name + '" loaded.');
   }
 
@@ -730,13 +866,21 @@
   }
 
   /* ---- wiring --------------------------------------------------------- */
+  var TEXT_KEYS = { signWidth: 1, signHeight: 1, fitToSign: 1, letterHeight: 1,
+    textAlign: 1, lineSpacing: 1, letterSpacing: 1, frame: 1, frameInset: 1,
+    textPadding: 1 };
+
   function onSettingChange(key, value, field) {
     state.settings[key] = value;
     if (field && field.dependsOn === undefined) {
       refreshVisibility(forms.geometry, SCHEMA.geometry, state.settings);
+      refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
     }
-    if (key === 'tessellationTolerance') reparseAndRecompute();
-    else recompute();
+    if (key === 'tessellationTolerance') regenerate();
+    else if (TEXT_KEYS[key]) {
+      if (state.settings.inputMode === 'text') rebuildText();
+      else recompute();
+    } else recompute();
   }
 
   function onBitChange(key, value) {
@@ -763,7 +907,10 @@
       function () { return ''; }, onBitChange);
     forms.material = buildForm($('#form-material'), MATERIAL_SCHEMA,
       function () { return ''; }, onMaterialChange);
+    forms.text = buildForm($('#form-text'), TEXT_SCHEMA, getSetting, onSettingChange);
     refreshVisibility(forms.geometry, SCHEMA.geometry, state.settings);
+    refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
+    populateFontSelect();
 
     /* settings tab switching */
     $('#settings-tabs').addEventListener('click', function (e) {
@@ -783,6 +930,26 @@
       if (!b) return;
       setOperationUI(b.dataset.op);
       recompute();
+    });
+
+    /* input mode + text sign */
+    $('#input-mode').addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (b) switchInputMode(b.dataset.mode);
+    });
+    $('#text-input').addEventListener('input', function () {
+      state.settings.textContent = this.value;
+      rebuildText();
+    });
+    $('#font-select').addEventListener('change', function () {
+      state.settings.fontKey = this.value;
+      loadFontThen(rebuildTextNow);
+    });
+    $('#font-upload-btn').addEventListener('click', function () {
+      $('#font-input').click();
+    });
+    $('#font-input').addEventListener('change', function () {
+      onFontUpload(this.files[0]);
     });
 
     /* SVG upload */
@@ -894,7 +1061,7 @@
 
     /* legend */
     var legend = $('#legend');
-    [['engrave', 'Engrave'], ['profile-out', 'Profile out'],
+    [['engrave', 'Engrave'], ['pocket', 'Pocket'], ['profile-out', 'Profile out'],
      ['profile-in', 'Profile in'], ['drill', 'Drill']].forEach(function (p) {
       var chip = el('span', 'legend-chip');
       var dot = el('span', 'legend-dot');
@@ -934,8 +1101,13 @@
           ? saved.materialId : state.materials[0].id;
         selectMaterial(mId, !saved);
       }
+      if (!Forge.textGeometry.FONTS.some(function (f) {
+        return f.key === state.settings.fontKey;
+      })) {
+        state.settings.fontKey = DEFAULTS.fontKey;
+      }
       syncAllForms();
-      recomputeNow();
+      switchInputMode(state.settings.inputMode || 'text');
     });
   }
 
