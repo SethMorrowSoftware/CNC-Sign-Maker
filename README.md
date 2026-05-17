@@ -106,6 +106,10 @@ condensed, heavy, slab, serif and script); you can also upload your own
 
 - **Outline** — pick the *Engrave* operation to trace each letter's outline.
 - **Filled** — pick the *Pocket* operation to clear each letter solid.
+- **V-carved** — pick the *V-carve* operation with a V-bit for crisp, true
+  V-cut lettering. The cut depth follows the bit's included angle, so the
+  flanks meet the surface exactly on the outline; the final depth caps how
+  deep wide areas go.
 
 Set a letter height, or let the text auto-fit the sign, and optionally cut a
 frame border. Cutting the sign blank to its outside size is a separate job —
@@ -117,6 +121,7 @@ use a pre-cut blank, or profile-out a rectangle.
 |--------------|--------------|
 | Engrave      | Traces the path centerline at one depth. No tool compensation. Outline lettering for text. |
 | Pocket       | Clears the inside of every closed shape with concentric passes — solid, filled lettering. Counters (the holes in O, A, e) are kept. |
+| V-carve      | V-carves closed shapes with a V-bit — crisp V-cut lettering. Depth follows the bit's included angle; the final depth caps how deep wide areas go. |
 | Profile out  | Cuts outside a closed path (tool radius + finishing). Multi-depth, tabs on the final pass. |
 | Profile in   | Cuts inside a closed path — pockets and openings. Multi-depth. |
 | Drill        | Plunge or helical-bore each closed feature. Holes smaller than the bit are plunge-drilled oversized. |

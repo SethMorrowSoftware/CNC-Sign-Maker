@@ -85,6 +85,7 @@ function forge_db(): PDO
     }
 
     forge_init_schema($db);
+    forge_migrate($db);
 
     // Seed (or top up) the library when the stored seed version is behind.
     $seeded = 0;
@@ -119,6 +120,7 @@ function forge_init_schema(PDO $db): void
             flute_count INTEGER NOT NULL DEFAULT 2,
             cutting_length_mm REAL,
             type TEXT NOT NULL DEFAULT 'upcut',
+            v_angle_deg REAL,
             notes TEXT
         );
         CREATE TABLE IF NOT EXISTS materials (
@@ -160,6 +162,34 @@ function forge_init_schema(PDO $db): void
 }
 
 /**
+ * Additive schema migrations for databases created by an earlier version.
+ * Idempotent and best-effort: each step checks before it runs.
+ */
+function forge_migrate(PDO $db): void
+{
+    try {
+        $cols = $db->query('PRAGMA table_info(bits)')->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('v_angle_deg', $cols, true)) {
+            $db->exec('ALTER TABLE bits ADD COLUMN v_angle_deg REAL');
+            // record the included angle for the V-bits the tool ships with
+            $angles = [
+                'Tapered engraving bit (2-color HDPE)'  => 30,
+                '20 deg V-bit (fine V-carve)'           => 20,
+                '30 deg V-bit (detail V-carve)'         => 30,
+                '60 deg V-bit (sign engraving)'         => 60,
+                '90 deg V-bit (bold V-carve / chamfer)' => 90,
+            ];
+            $st = $db->prepare('UPDATE bits SET v_angle_deg = ? WHERE name = ?');
+            foreach ($angles as $name => $deg) {
+                $st->execute([$deg, $name]);
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('LowRider Forge: bits migration skipped — ' . $e->getMessage());
+    }
+}
+
+/**
  * Seed the starter library. Idempotent: every insert is INSERT OR IGNORE and
  * the whole batch runs in one transaction, so a concurrent first request or a
  * re-seed after a partial wipe can never raise a UNIQUE-constraint error.
@@ -171,54 +201,55 @@ function forge_seed(PDO $db): void
         $db->beginTransaction();
 
         // --- Bits: a standard sign-shop set ---
+        // [name, diameter, shank, flutes, cutting length, type, V-angle, notes]
         $bits = [
             // end mills — wood, foam, board
-            ['1/16" 2-flute upcut (fine detail)', 1.5875, 3.175, 2, 6.0, 'upcut',
+            ['1/16" 2-flute upcut (fine detail)', 1.5875, 3.175, 2, 6.0, 'upcut', null,
                 'Tiny detail in wood and plastics. Fragile — light passes, modest feed.'],
-            ['1/8" 2-flute upcut (detail wood, SpeTool W04021)', 3.175, 3.175, 2, 25.4, 'upcut',
+            ['1/8" 2-flute upcut (detail wood, SpeTool W04021)', 3.175, 3.175, 2, 25.4, 'upcut', null,
                 'Fine detail in wood. Long reach.'],
-            ['1/4" 2-flute upcut (general wood/foam)', 6.35, 6.35, 2, 25.0, 'upcut',
+            ['1/4" 2-flute upcut (general wood/foam)', 6.35, 6.35, 2, 25.0, 'upcut', null,
                 'General purpose for wood and rigid foam.'],
-            ['1/8" 2-flute downcut (clean top edge)', 3.175, 3.175, 2, 22.0, 'downcut',
+            ['1/8" 2-flute downcut (clean top edge)', 3.175, 3.175, 2, 22.0, 'downcut', null,
                 'Pushes chips down for a splinter-free top surface. Shallow passes — downcut clears chips poorly.'],
-            ['1/4" 2-flute downcut (clean top edge)', 6.35, 6.35, 2, 25.0, 'downcut',
+            ['1/4" 2-flute downcut (clean top edge)', 6.35, 6.35, 2, 25.0, 'downcut', null,
                 'Clean top face on plywood and laminate. Keep passes shallow.'],
-            ['1/8" compression (plywood, both faces clean)', 3.175, 3.175, 2, 22.0, 'compression',
+            ['1/8" compression (plywood, both faces clean)', 3.175, 3.175, 2, 22.0, 'compression', null,
                 'Up-cut tip plus down-cut body. The first pass must be deep enough to reach the down-cut section.'],
-            ['1/4" compression (plywood, both faces clean)', 6.35, 6.35, 2, 28.0, 'compression',
+            ['1/4" compression (plywood, both faces clean)', 6.35, 6.35, 2, 28.0, 'compression', null,
                 'Clean top and bottom faces on plywood. First pass deeper than the up-cut tip.'],
             // O-flutes — plastics
-            ['1/8" single-flute O-flute (plastic detail)', 3.175, 3.175, 1, 17.0, 'O-flute',
+            ['1/8" single-flute O-flute (plastic detail)', 3.175, 3.175, 1, 17.0, 'O-flute', null,
                 'Detail work in plastics. Short cutting length — watch depth.'],
-            ['1/4" single-flute O-flute (plastics)', 6.35, 6.35, 1, 25.0, 'O-flute',
+            ['1/4" single-flute O-flute (plastics)', 6.35, 6.35, 1, 25.0, 'O-flute', null,
                 'Mandatory for HDPE and acrylic — clears chips, avoids melting.'],
-            ['1/4" two-flute O-flute (plastics, fast)', 6.35, 6.35, 2, 25.0, 'O-flute',
+            ['1/4" two-flute O-flute (plastics, fast)', 6.35, 6.35, 2, 25.0, 'O-flute', null,
                 'Faster clearing in HDPE/acrylic than single-flute — keep the feed high so it cannot melt.'],
-            // V-bits and engraving — sign lettering
-            ['Tapered engraving bit (2-color HDPE)', 3.175, 6.35, 1, 12.0, 'V-bit',
-                'Conical engraving bit with a fine tip — crisp lettering in two-color HDPE. Set depth like a V-bit.'],
-            ['20 deg V-bit (fine V-carve)', 6.35, 6.35, 1, 10.0, 'V-bit',
+            // V-bits and engraving — sign lettering and V-carving
+            ['Tapered engraving bit (2-color HDPE)', 3.175, 6.35, 1, 12.0, 'V-bit', 30.0,
+                'Conical engraving bit with a fine tip — crisp lettering in two-color HDPE. V-carves at a 30-degree included angle.'],
+            ['20 deg V-bit (fine V-carve)', 6.35, 6.35, 1, 10.0, 'V-bit', 20.0,
                 'Narrow V for fine, detailed lettering and intricate V-carving.'],
-            ['30 deg V-bit (detail V-carve)', 9.5, 6.35, 1, 11.0, 'V-bit',
+            ['30 deg V-bit (detail V-carve)', 9.5, 6.35, 1, 11.0, 'V-bit', 30.0,
                 'Detailed V-carved lettering. Effective width grows with depth.'],
-            ['60 deg V-bit (sign engraving)', 12.7, 6.35, 1, 12.0, 'V-bit',
-                'V-carving / engraving. Effective diameter varies with depth.'],
-            ['90 deg V-bit (bold V-carve / chamfer)', 19.05, 6.35, 1, 9.0, 'V-bit',
+            ['60 deg V-bit (sign engraving)', 12.7, 6.35, 1, 12.0, 'V-bit', 60.0,
+                'The sign-shop workhorse for V-carved lettering.'],
+            ['90 deg V-bit (bold V-carve / chamfer)', 19.05, 6.35, 1, 9.0, 'V-bit', 90.0,
                 'Wide V for bold lettering, chamfers and edge bevels.'],
             // ball nose — relief
-            ['1/8" ball nose (relief / rounded pockets)', 3.175, 3.175, 2, 22.0, 'upcut',
+            ['1/8" ball nose (relief / rounded pockets)', 3.175, 3.175, 2, 22.0, 'upcut', null,
                 'Rounded tip for relief carving and softened pocket floors.'],
-            ['1/4" ball nose (relief carving)', 6.35, 6.35, 2, 25.0, 'upcut',
+            ['1/4" ball nose (relief carving)', 6.35, 6.35, 2, 25.0, 'upcut', null,
                 'Rounded tip for 3D relief and contoured signs.'],
             // aluminium
-            ['1/8" single-flute aluminium', 3.175, 3.175, 1, 12.0, 'upcut',
+            ['1/8" single-flute aluminium', 3.175, 3.175, 1, 12.0, 'upcut', null,
                 'For 6061 detail. Slow feed, very shallow DOC, single flute clears swarf.'],
-            ['1/4" single-flute aluminium', 6.35, 6.35, 1, 18.0, 'upcut',
+            ['1/4" single-flute aluminium', 6.35, 6.35, 1, 18.0, 'upcut', null,
                 'For 6061. Slow feeds, shallow DOC, single flute clears swarf.'],
         ];
         $stmt = $db->prepare('INSERT OR IGNORE INTO bits
-            (name,diameter_mm,shank_diameter_mm,flute_count,cutting_length_mm,type,notes)
-            VALUES (?,?,?,?,?,?,?)');
+            (name,diameter_mm,shank_diameter_mm,flute_count,cutting_length_mm,type,v_angle_deg,notes)
+            VALUES (?,?,?,?,?,?,?,?)');
         foreach ($bits as $b) {
             $stmt->execute($b);
         }

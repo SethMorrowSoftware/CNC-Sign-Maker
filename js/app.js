@@ -37,6 +37,8 @@
       'For text this gives outline lettering.',
     pocket: 'Clears the inside of every closed shape — solid, filled lettering. ' +
       'Counters (the holes in O, A, e) are kept.',
+    vcarve: 'V-carves every closed shape with a V-bit — crisp, true V-cut ' +
+      'lettering. Depth follows the bit angle; the final depth is the cap.',
     'profile-out': 'Cuts outside the path (tool radius + finishing). Multi-depth, ' +
       'tabs on the final pass. Small features are drilled.',
     'profile-in': 'Cuts inside the path — pockets and opening cutouts. Multi-depth.',
@@ -135,6 +137,8 @@
       hint: 'Max plunge before the chuck collides.' },
     { key: 'type', label: 'Type', type: 'select',
       options: opts(['upcut', 'downcut', 'compression', 'O-flute', 'V-bit']) },
+    { key: 'v_angle_deg', label: 'V-bit angle', type: 'number', step: 1, min: 0, max: 180,
+      unit: '°', hint: 'Included angle of a V-bit — required for V-carving.' },
     { key: 'notes', label: 'Notes', type: 'textarea' }
   ];
 
@@ -1061,8 +1065,9 @@
 
     /* legend */
     var legend = $('#legend');
-    [['engrave', 'Engrave'], ['pocket', 'Pocket'], ['profile-out', 'Profile out'],
-     ['profile-in', 'Profile in'], ['drill', 'Drill']].forEach(function (p) {
+    [['engrave', 'Engrave'], ['pocket', 'Pocket'], ['vcarve', 'V-carve'],
+     ['profile-out', 'Profile out'], ['profile-in', 'Profile in'],
+     ['drill', 'Drill']].forEach(function (p) {
       var chip = el('span', 'legend-chip');
       var dot = el('span', 'legend-dot');
       dot.style.background = Forge.toolpath.OP_COLORS[p[0]];

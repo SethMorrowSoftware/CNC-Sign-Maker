@@ -23,6 +23,7 @@ function bit_payload(array $body): array
         'flute_count'       => max(1, ni($body['flute_count'] ?? null) ?? 2),
         'cutting_length_mm' => nf($body['cutting_length_mm'] ?? null),
         'type'              => $type,
+        'v_angle_deg'       => nf($body['v_angle_deg'] ?? null),
         'notes'             => trim((string) ($body['notes'] ?? '')),
     ];
 }
@@ -46,8 +47,8 @@ function handle_bits(string $method, ?int $id): void
             $p = bit_payload(read_json_body());
             try {
                 $s = $db->prepare('INSERT INTO bits
-                    (name,diameter_mm,shank_diameter_mm,flute_count,cutting_length_mm,type,notes)
-                    VALUES (:name,:diameter_mm,:shank_diameter_mm,:flute_count,:cutting_length_mm,:type,:notes)');
+                    (name,diameter_mm,shank_diameter_mm,flute_count,cutting_length_mm,type,v_angle_deg,notes)
+                    VALUES (:name,:diameter_mm,:shank_diameter_mm,:flute_count,:cutting_length_mm,:type,:v_angle_deg,:notes)');
                 $s->execute($p);
             } catch (PDOException $e) {
                 json_response(['error' => 'A bit with that name already exists'], 409);
@@ -66,7 +67,7 @@ function handle_bits(string $method, ?int $id): void
             $s = $db->prepare('UPDATE bits SET
                 name=:name, diameter_mm=:diameter_mm, shank_diameter_mm=:shank_diameter_mm,
                 flute_count=:flute_count, cutting_length_mm=:cutting_length_mm,
-                type=:type, notes=:notes WHERE id=:id');
+                type=:type, v_angle_deg=:v_angle_deg, notes=:notes WHERE id=:id');
             $s->execute($p);
             if ($s->rowCount() === 0) {
                 json_response(['error' => 'Bit not found'], 404);
