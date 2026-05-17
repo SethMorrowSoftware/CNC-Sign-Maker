@@ -17,6 +17,10 @@ defined('FORGE_APP') || exit('Direct access denied');
 
 const FORGE_VERSION = '1.0.0';
 
+// Bumped whenever the seed library changes, so existing databases pick up new
+// bits and materials on the next request. Seeding is idempotent.
+const FORGE_SEED_VERSION = 2;
+
 function forge_data_dir(): string
 {
     return dirname(__DIR__) . '/data';
@@ -55,8 +59,7 @@ function forge_db(): PDO
         @mkdir($jobsDir, 0775, true);
     }
 
-    $path  = $dir . '/forge.sqlite';
-    $fresh = !file_exists($path);
+    $path = $dir . '/forge.sqlite';
 
     try {
         $db = new PDO('sqlite:' . $path, null, null, [
@@ -82,8 +85,24 @@ function forge_db(): PDO
     }
 
     forge_init_schema($db);
-    if ($fresh || (int) $db->query('SELECT COUNT(*) FROM bits')->fetchColumn() === 0) {
+
+    // Seed (or top up) the library when the stored seed version is behind.
+    $seeded = 0;
+    try {
+        $seeded = (int) ($db->query(
+            "SELECT value FROM meta WHERE key = 'seed_version'")->fetchColumn() ?: 0);
+    } catch (Throwable $e) {
+        // meta table missing/unreadable — treat as never seeded
+    }
+    if ($seeded < FORGE_SEED_VERSION) {
         forge_seed($db);
+        try {
+            $db->prepare("INSERT INTO meta (key, value) VALUES ('seed_version', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+               ->execute([(string) FORGE_SEED_VERSION]);
+        } catch (Throwable $e) {
+            error_log('LowRider Forge: could not record seed version — ' . $e->getMessage());
+        }
     }
 
     return $db;
@@ -133,6 +152,10 @@ function forge_init_schema(PDO $db): void
             settings_json TEXT NOT NULL,
             created_at INTEGER
         );
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
         SQL);
 }
 
@@ -147,18 +170,49 @@ function forge_seed(PDO $db): void
     try {
         $db->beginTransaction();
 
-        // --- Bits (spec section 13) ---
+        // --- Bits: a standard sign-shop set ---
         $bits = [
-            ['1/4" 2-flute upcut (general wood/foam)', 6.35, 6.35, 2, 25.0, 'upcut',
-                'General purpose for wood and rigid foam.'],
+            // end mills — wood, foam, board
+            ['1/16" 2-flute upcut (fine detail)', 1.5875, 3.175, 2, 6.0, 'upcut',
+                'Tiny detail in wood and plastics. Fragile — light passes, modest feed.'],
             ['1/8" 2-flute upcut (detail wood, SpeTool W04021)', 3.175, 3.175, 2, 25.4, 'upcut',
                 'Fine detail in wood. Long reach.'],
-            ['1/4" single-flute O-flute (plastics)', 6.35, 6.35, 1, 25.0, 'O-flute',
-                'Mandatory for HDPE and acrylic — clears chips, avoids melting.'],
+            ['1/4" 2-flute upcut (general wood/foam)', 6.35, 6.35, 2, 25.0, 'upcut',
+                'General purpose for wood and rigid foam.'],
+            ['1/8" 2-flute downcut (clean top edge)', 3.175, 3.175, 2, 22.0, 'downcut',
+                'Pushes chips down for a splinter-free top surface. Shallow passes — downcut clears chips poorly.'],
+            ['1/4" 2-flute downcut (clean top edge)', 6.35, 6.35, 2, 25.0, 'downcut',
+                'Clean top face on plywood and laminate. Keep passes shallow.'],
+            ['1/8" compression (plywood, both faces clean)', 3.175, 3.175, 2, 22.0, 'compression',
+                'Up-cut tip plus down-cut body. The first pass must be deep enough to reach the down-cut section.'],
+            ['1/4" compression (plywood, both faces clean)', 6.35, 6.35, 2, 28.0, 'compression',
+                'Clean top and bottom faces on plywood. First pass deeper than the up-cut tip.'],
+            // O-flutes — plastics
             ['1/8" single-flute O-flute (plastic detail)', 3.175, 3.175, 1, 17.0, 'O-flute',
                 'Detail work in plastics. Short cutting length — watch depth.'],
+            ['1/4" single-flute O-flute (plastics)', 6.35, 6.35, 1, 25.0, 'O-flute',
+                'Mandatory for HDPE and acrylic — clears chips, avoids melting.'],
+            ['1/4" two-flute O-flute (plastics, fast)', 6.35, 6.35, 2, 25.0, 'O-flute',
+                'Faster clearing in HDPE/acrylic than single-flute — keep the feed high so it cannot melt.'],
+            // V-bits and engraving — sign lettering
+            ['Tapered engraving bit (2-color HDPE)', 3.175, 6.35, 1, 12.0, 'V-bit',
+                'Conical engraving bit with a fine tip — crisp lettering in two-color HDPE. Set depth like a V-bit.'],
+            ['20 deg V-bit (fine V-carve)', 6.35, 6.35, 1, 10.0, 'V-bit',
+                'Narrow V for fine, detailed lettering and intricate V-carving.'],
+            ['30 deg V-bit (detail V-carve)', 9.5, 6.35, 1, 11.0, 'V-bit',
+                'Detailed V-carved lettering. Effective width grows with depth.'],
             ['60 deg V-bit (sign engraving)', 12.7, 6.35, 1, 12.0, 'V-bit',
                 'V-carving / engraving. Effective diameter varies with depth.'],
+            ['90 deg V-bit (bold V-carve / chamfer)', 19.05, 6.35, 1, 9.0, 'V-bit',
+                'Wide V for bold lettering, chamfers and edge bevels.'],
+            // ball nose — relief
+            ['1/8" ball nose (relief / rounded pockets)', 3.175, 3.175, 2, 22.0, 'upcut',
+                'Rounded tip for relief carving and softened pocket floors.'],
+            ['1/4" ball nose (relief carving)', 6.35, 6.35, 2, 25.0, 'upcut',
+                'Rounded tip for 3D relief and contoured signs.'],
+            // aluminium
+            ['1/8" single-flute aluminium', 3.175, 3.175, 1, 12.0, 'upcut',
+                'For 6061 detail. Slow feed, very shallow DOC, single flute clears swarf.'],
             ['1/4" single-flute aluminium', 6.35, 6.35, 1, 18.0, 'upcut',
                 'For 6061. Slow feeds, shallow DOC, single flute clears swarf.'],
         ];
@@ -169,24 +223,46 @@ function forge_seed(PDO $db): void
             $stmt->execute($b);
         }
 
-        // --- Materials (spec section 13) ---
+        // --- Materials: a standard sign-shop set ---
         $materials = [
             ['1.5" rigid insulation foam', 38.0, 'upcut', 18000, 3000, 1200, 12.0, 1.0,
                 'Soft — fast feeds fine. Watch for tear-out with dull bits.'],
+            ['PVC foam board (Sintra) 3mm', 3.0, 'O-flute', 16000, 2500, 800, 2.0, 0.5,
+                'Easy to cut and engrave. A single-flute O-flute keeps edges clean.'],
+            ['PVC foam board (Sintra) 6mm', 6.0, 'O-flute', 16000, 2200, 700, 2.5, 0.5,
+                'Common sign substrate. Keep RPM moderate so it cannot melt.'],
+            ['PVC foam board (Sintra) 10mm', 10.0, 'O-flute', 16000, 2000, 600, 3.0, 0.5,
+                'Thicker sign board. Single-flute O-flute, moderate RPM.'],
+            ['2-color HDPE (engraving stock)', 3.175, 'O-flute', 18000, 1500, 500, 1.0, 0.5,
+                'Cap layer 0.3-0.5mm thick and varies by manufacturer. Single-flute O-flute only.'],
+            ['HDPE solid 3mm', 3.0, 'O-flute', 18000, 2000, 600, 1.5, 0.6,
+                'Single-flute O-flute mandatory — multi-flute bits melt HDPE.'],
+            ['HDPE solid 6mm', 6.0, 'O-flute', 18000, 1800, 600, 2.0, 0.6,
+                'Single-flute O-flute mandatory — multi-flute bits melt HDPE.'],
+            ['HDPE solid 12mm', 12.0, 'O-flute', 18000, 1500, 500, 2.5, 0.6,
+                'Thick HDPE. Single-flute O-flute; clear chips well to avoid melting.'],
             ['1/4" plywood', 6.35, 'upcut', 18000, 2000, 700, 3.0, 0.65,
                 'Measure your actual thickness before cutting; nominal 1/4" plywood is often 5.5-6.0mm.'],
+            ['1/2" plywood', 12.7, 'upcut', 18000, 1800, 600, 3.0, 0.65,
+                'Measure actual thickness; voids possible in cheaper ply.'],
+            ['Baltic birch plywood 6mm', 6.0, 'compression', 18000, 2000, 700, 3.0, 0.6,
+                'Void-free premium ply. A compression bit leaves both faces clean.'],
+            ['Baltic birch plywood 12mm', 12.0, 'compression', 18000, 1800, 600, 3.0, 0.6,
+                'Premium ply for sign blanks. Compression bit for clean faces.'],
             ['1/4" MDF', 6.35, 'upcut', 18000, 2200, 800, 3.0, 0.65,
                 'Dusty. Nominal thickness usually accurate to +/-0.2mm.'],
             ['1/4" hardboard', 6.35, 'upcut', 18000, 2000, 700, 3.0, 0.65,
                 'Dense and abrasive on bits.'],
-            ['1/2" plywood', 12.7, 'upcut', 18000, 1800, 600, 3.0, 0.65,
-                'Measure actual thickness; voids possible in cheaper ply.'],
-            ['2-color HDPE (engraving stock)', 3.175, 'O-flute', 18000, 1500, 500, 1.0, 0.5,
-                'Cap layer 0.3-0.5mm thick and varies by manufacturer. Single-flute O-flute only.'],
-            ['HDPE solid 6mm', 6.0, 'O-flute', 18000, 1800, 600, 2.0, 0.6,
-                'Single-flute O-flute mandatory — multi-flute bits melt HDPE.'],
+            ['Cast acrylic 3mm', 3.0, 'O-flute', 18000, 1600, 500, 1.5, 0.5,
+                'Cast acrylic only — extruded melts and chips. Single-flute O-flute.'],
             ['1/4" acrylic (cast)', 6.35, 'O-flute', 18000, 1400, 450, 1.5, 0.5,
                 'Cast acrylic only — extruded melts and chips. Single-flute O-flute.'],
+            ['ACM / Dibond 3mm', 3.0, 'O-flute', 18000, 2000, 600, 1.0, 0.4,
+                'Aluminium-skinned composite. Single-flute O-flute, moderate feed — the core cuts easily, the skins do not.'],
+            ['Hardwood board (oak / maple)', 19.0, 'upcut', 18000, 1800, 600, 3.0, 0.6,
+                'Dense hardwood for routed signs. A climb-mill final pass leaves a clean edge.'],
+            ['Cedar sign board', 19.0, 'upcut', 16000, 2400, 800, 4.0, 0.6,
+                'Soft and forgiving for carved signs. Watch for fuzzy grain with dull bits.'],
             ['6061-T6 aluminium 3mm', 3.0, 'upcut', 18000, 800, 250, 0.5, 0.3,
                 'Slow feeds, shallow DOC. Use lubricant. Single-flute aluminium bit.'],
         ];
