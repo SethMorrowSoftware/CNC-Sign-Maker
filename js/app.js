@@ -427,7 +427,9 @@
   function switchInputMode(mode) {
     state.settings.inputMode = mode;
     Array.prototype.forEach.call($('#input-mode').children, function (b) {
-      b.classList.toggle('active', b.dataset.mode === mode);
+      var isActive = b.dataset.mode === mode;
+      b.classList.toggle('active', isActive);
+      b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
     $('#text-panel').classList.toggle('hidden', mode !== 'text');
     $('#svg-panel').classList.toggle('hidden', mode === 'text');
@@ -466,7 +468,7 @@
     if (!state.validation) {
       list.appendChild(el('li', 'vi vi-info',
         state.geometry ? 'Adjust settings to generate a toolpath.'
-                        : 'Upload an SVG to begin.'));
+                        : 'Load artwork to begin (text sign or SVG).'));
       return;
     }
     var issues = state.validation.issues;
@@ -681,7 +683,9 @@
   function setOperationUI(op) {
     state.settings.operation = op;
     Array.prototype.forEach.call($('#operation-picker').children, function (b) {
-      b.classList.toggle('active', b.dataset.op === op);
+      var isActive = b.dataset.op === op;
+      b.classList.toggle('active', isActive);
+      b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
     $('#op-hint').textContent = OP_HINTS[op] || '';
   }
