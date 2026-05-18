@@ -173,7 +173,79 @@
         }
         return [polygonPath(pts)];
       }
-    }
+    },
+    triangle: { label: 'Triangle', params: [],
+      path: function () { return [polygonPath([[0.5, 0], [1, 1], [0, 1]])]; } },
+    pentagon: { label: 'Pentagon', params: [],
+      path: function () {
+        var pts = [];
+        for (var i = 0; i < 5; i++) {
+          var a = -Math.PI / 2 + i * 2 * Math.PI / 5;
+          pts.push([0.5 + Math.cos(a) * 0.5, 0.5 + Math.sin(a) * 0.5]);
+        }
+        return [polygonPath(pts)];
+      } },
+    octagon: { label: 'Octagon',
+      params: [{ key: 'inset', label: 'Corner inset', min: 0.1, max: 0.45, def: 0.3, step: 0.01, unit: 'ratio' }],
+      path: function (p) {
+        var n = clamp(p.inset == null ? 0.3 : p.inset, 0.1, 0.45);
+        return [polygonPath([[n, 0], [1 - n, 0], [1, n], [1, 1 - n], [1 - n, 1], [n, 1], [0, 1 - n], [0, n]])];
+      } },
+    cross: { label: 'Cross / plus',
+      params: [{ key: 'thickness', label: 'Arm thickness', min: 0.1, max: 0.8, def: 0.34, step: 0.01, unit: 'ratio' }],
+      path: function (p) {
+        var t = clamp(p.thickness == null ? 0.34 : p.thickness, 0.1, 0.8);
+        var a = (1 - t) / 2, b = (1 + t) / 2;
+        return [polygonPath([[a, 0], [b, 0], [b, a], [1, a], [1, b], [b, b], [b, 1], [a, 1], [a, b], [0, b], [0, a], [a, a]])];
+      } },
+    chevron: { label: 'Chevron',
+      params: [{ key: 'notch', label: 'Notch depth', min: 0.1, max: 0.9, def: 0.5, step: 0.01, unit: 'ratio' }],
+      path: function (p) {
+        var d = clamp(p.notch == null ? 0.5 : p.notch, 0.1, 0.9);
+        return [polygonPath([[0, 0], [1, 0.5], [0, 1], [d, 0.5]])];
+      } },
+    trapezoid: { label: 'Trapezoid',
+      params: [{ key: 'topWidth', label: 'Top width', min: 0.1, max: 0.95, def: 0.6, step: 0.01, unit: 'ratio' }],
+      path: function (p) {
+        var w = clamp(p.topWidth == null ? 0.6 : p.topWidth, 0.1, 0.95);
+        var x0 = (1 - w) / 2, x1 = (1 + w) / 2;
+        return [polygonPath([[x0, 0], [x1, 0], [1, 1], [0, 1]])];
+      } },
+    parallelogram: { label: 'Parallelogram',
+      params: [{ key: 'slant', label: 'Slant', min: 0.05, max: 0.6, def: 0.25, step: 0.01, unit: 'ratio' }],
+      path: function (p) {
+        var s = clamp(p.slant == null ? 0.25 : p.slant, 0.05, 0.6);
+        return [polygonPath([[s, 0], [1, 0], [1 - s, 1], [0, 1]])];
+      } },
+    banner: { label: 'Banner / ribbon',
+      params: [{ key: 'notch', label: 'End notch', min: 0.05, max: 0.45, def: 0.18, step: 0.01, unit: 'ratio' }],
+      path: function (p) {
+        var n = clamp(p.notch == null ? 0.18 : p.notch, 0.05, 0.45);
+        return [polygonPath([[0, 0], [1, 0], [1 - n, 0.5], [1, 1], [0, 1], [n, 0.5]])];
+      } },
+    heart: { label: 'Heart', params: [],
+      path: function () {
+        return ['M0.5,0.27C0.5,0.12 0.35,0 0.2,0C0.07,0 0,0.13 0,0.27C0,0.45 0.18,0.62 0.5,1C0.82,0.62 1,0.45 1,0.27C1,0.13 0.93,0 0.8,0C0.65,0 0.5,0.12 0.5,0.27Z'];
+      } },
+    gear: { label: 'Gear',
+      params: [{ key: 'teeth', label: 'Teeth', min: 6, max: 24, def: 10, step: 1, unit: 'count' }],
+      path: function (p) {
+        var n = Math.round(clamp(p.teeth == null ? 10 : p.teeth, 6, 24));
+        var rOut = 0.5, rRoot = 0.4, step = 2 * Math.PI / n, pts = [];
+        for (var i = 0; i < n; i++) {
+          var a = -Math.PI / 2 + i * step;
+          [[0.0, rRoot], [0.18, rRoot], [0.30, rOut], [0.70, rOut], [0.82, rRoot]].forEach(function (q) {
+            var ang = a + step * q[0];
+            pts.push([0.5 + Math.cos(ang) * q[1], 0.5 + Math.sin(ang) * q[1]]);
+          });
+        }
+        return [polygonPath(pts), 'M0.5,0.35A0.15,0.15 0 1 1 0.5,0.65A0.15,0.15 0 1 1 0.5,0.35Z'];
+      } },
+    lightning: { label: 'Lightning bolt', params: [],
+      path: function () {
+        return [polygonPath([[0.6, 0], [0.1, 0.55], [0.45, 0.55], [0.3, 1], [0.9, 0.42], [0.5, 0.42], [0.78, 0]])];
+      } }
+
   };
 
   Forge.shapes = { SHAPES: SHAPES };
