@@ -450,6 +450,17 @@
 
 
 
+
+  function formatShapeParamHint(param, width, height) {
+    if (!param || param.unit !== 'ratio') return '';
+    var w = isFinite(width) && width > 0 ? width : 0;
+    var h = isFinite(height) && height > 0 ? height : 0;
+    var minSide = Math.min(w, h);
+    if (!(minSide > 0)) return 'Ratio is based on the shape size.';
+    var mm = (param.def || 0) * minSide;
+    return '≈ ' + mm.toFixed(1) + 'mm at current size (' + minSide.toFixed(0) + 'mm min side).';
+  }
+
   function renderShapeBuilderParams() {
     var box = $('#shape-param-fields');
     if (!box || !Forge.shapes || !Forge.shapes.SHAPES) return;
@@ -459,14 +470,18 @@
     if (!def || !Array.isArray(def.params)) return;
     def.params.forEach(function (param) {
       var lab = el('label', 'field');
-      lab.appendChild(el('span', null, param.key));
+      var title = param.label || param.key;
+      if (param.unit === 'ratio') title += ' (%)';
+      lab.appendChild(el('span', null, title));
       var inp = el('input');
       inp.type = 'number'; inp.id = 'shape-param-' + param.key;
-      inp.step = 0.01;
-      if (param.min != null) inp.min = param.min;
-      if (param.max != null) inp.max = param.max;
-      inp.value = param.def;
+      inp.step = param.step != null ? param.step : 0.01;
+      if (param.min != null) inp.min = param.unit === 'ratio' ? (param.min * 100) : param.min;
+      if (param.max != null) inp.max = param.unit === 'ratio' ? (param.max * 100) : param.max;
+      inp.value = param.unit === 'ratio' ? (param.def * 100) : param.def;
       lab.appendChild(inp);
+      var hint = formatShapeParamHint(param, parseFloat($('#shape-width').value), parseFloat($('#shape-height').value));
+      if (hint) lab.appendChild(el('span', 'shape-param-hint', hint));
       box.appendChild(lab);
     });
   }
@@ -486,6 +501,8 @@
     shapeSel.value = 'arrow';
     anchorSel.value = 'center';
     shapeSel.addEventListener('change', renderShapeBuilderParams);
+    $('#shape-width').addEventListener('input', renderShapeBuilderParams);
+    $('#shape-height').addEventListener('input', renderShapeBuilderParams);
     renderShapeBuilderParams();
   }
 
@@ -508,10 +525,10 @@
         inp.addEventListener('input', function(){ var v=parseFloat(inp.value); if(isFinite(v)){ g[key]=v; rebuildText(); renderGraphicsList(); }});
         lab.appendChild(inp); fields.appendChild(lab);
       }
-      addNum((idx + 1) + '. W', 'width', 1);
-      addNum('H', 'height', 1);
-      addNum('X offset', 'offsetX', 0.5);
-      addNum('Y offset', 'offsetY', 0.5);
+      addNum((idx + 1) + '. W (mm)', 'width', 1);
+      addNum('H (mm)', 'height', 1);
+      addNum('X offset (mm)', 'offsetX', 0.5);
+      addNum('Y offset (mm)', 'offsetY', 0.5);
       row.appendChild(fields);
       var del = el('button', 'link-btn graphics-remove', 'Remove');
       del.type = 'button';
@@ -565,7 +582,9 @@
         var inp = $('#shape-param-' + param.key);
         if (!inp) return;
         var num = parseFloat(inp.value);
-        if (isFinite(num)) g.params[param.key] = num;
+        if (!isFinite(num)) return;
+        if (param.unit === 'ratio') num = num / 100;
+        g.params[param.key] = num;
       });
     }
 

@@ -20,7 +20,7 @@
     rectangle: { label: 'Rectangle', params: [], path: function () { return ['M0,0L1,0L1,1L0,1Z']; } },
     roundedRect: {
       label: 'Rounded rectangle',
-      params: [{ key: 'radius', min: 0.01, max: 0.49, def: 0.16 }],
+      params: [{ key: 'radius', label: 'Corner radius', min: 0.01, max: 0.49, def: 0.16, step: 0.01, unit: 'ratio' }],
       path: function (params) {
         var r = clamp(params.radius == null ? 0.16 : params.radius, 0.01, 0.49);
         return ['M' + r + ',0L' + (1 - r) + ',0A' + r + ',' + r + ' 0 0 1 1,' + r +
@@ -30,7 +30,7 @@
     },
     borderRect: {
       label: 'Rectangular border',
-      params: [{ key: 'thickness', min: 0.03, max: 0.45, def: 0.12 }],
+      params: [{ key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.45, def: 0.12, step: 0.01, unit: 'ratio' }],
       path: function (params) {
         var t = clamp(params.thickness == null ? 0.12 : params.thickness, 0.03, 0.45);
         return [rectPath(0, 0, 1, 1), rectPath(t, t, 1 - 2 * t, 1 - 2 * t)];
@@ -43,7 +43,7 @@
     },
     ring: {
       label: 'Ring border',
-      params: [{ key: 'thickness', min: 0.03, max: 0.45, def: 0.12 }],
+      params: [{ key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.45, def: 0.12, step: 0.01, unit: 'ratio' }],
       path: function (params) {
         var t = clamp(params.thickness == null ? 0.12 : params.thickness, 0.03, 0.45);
         var r = 0.5 - t;
@@ -53,7 +53,7 @@
     },
     arrow: {
       label: 'Arrow',
-      params: [{ key: 'headRatio', min: 0.15, max: 0.8, def: 0.35 }, { key: 'shaftRatio', min: 0.1, max: 0.9, def: 0.35 }],
+      params: [{ key: 'headRatio', label: 'Head length', min: 0.15, max: 0.8, def: 0.35, step: 0.01, unit: 'ratio' }, { key: 'shaftRatio', label: 'Shaft width', min: 0.1, max: 0.9, def: 0.35, step: 0.01, unit: 'ratio' }],
       path: function (params) {
         var hr = clamp(params.headRatio == null ? 0.35 : params.headRatio, 0.15, 0.8);
         var sr = clamp(params.shaftRatio == null ? 0.35 : params.shaftRatio, 0.1, 0.9);
@@ -65,7 +65,7 @@
     diamond: { label: 'Diamond', params: [], path: function () { return [polygonPath([[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]])]; } },
     star: {
       label: 'Star',
-      params: [{ key: 'innerRatio', min: 0.2, max: 0.8, def: 0.45 }, { key: 'points', min: 3, max: 12, def: 5 }],
+      params: [{ key: 'innerRatio', label: 'Inner radius', min: 0.2, max: 0.8, def: 0.45, step: 0.01, unit: 'ratio' }, { key: 'points', label: 'Points', min: 3, max: 12, def: 5, step: 1, unit: 'count' }],
       path: function (params) {
         var inner = clamp(params.innerRatio == null ? 0.45 : params.innerRatio, 0.2, 0.8);
         var n = Math.round(clamp(params.points == null ? 5 : params.points, 3, 12));

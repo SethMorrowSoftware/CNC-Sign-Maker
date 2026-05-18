@@ -171,6 +171,13 @@ button { font-family: inherit; cursor: pointer; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
+
+.shape-param-hint {
+  font-size: 10px;
+  color: var(--muted-2);
+  margin-top: 2px;
+}
+
 .graphics-row-fields {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
