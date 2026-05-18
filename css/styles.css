@@ -208,6 +208,15 @@ button { font-family: inherit; cursor: pointer; }
   padding: 4px 7px;
   font-size: 10.5px;
 }
+
+.shape-layout-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.shape-layout-row .btn { white-space: nowrap; }
+
 .sample-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .muted-label { font-size: 11px; color: var(--muted-2); }
 .link-btn {

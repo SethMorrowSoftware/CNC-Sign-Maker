@@ -782,21 +782,52 @@
       toast('Add at least one shape first, then apply a layout preset.', 'warn');
       return;
     }
-    if (preset !== 'text-top-shape-bottom') return;
-    state.settings.textAnchor = 'top-center';
-    state.settings.textOffsetX = 0;
-    state.settings.textOffsetY = 6;
+
+    var layoutMap = {
+      'text-top-shape-bottom': {
+        textAnchor: 'top-center', textOffsetX: 0, textOffsetY: 6,
+        shapeAnchor: 'bottom-center', shapeOffsetX: 0, shapeOffsetY: -6,
+        message: 'Applied layout: text top, shape(s) bottom.'
+      },
+      'shape-top-text-bottom': {
+        textAnchor: 'bottom-center', textOffsetX: 0, textOffsetY: -6,
+        shapeAnchor: 'top-center', shapeOffsetX: 0, shapeOffsetY: 6,
+        message: 'Applied layout: shape(s) top, text bottom.'
+      },
+      'text-left-shape-right': {
+        textAnchor: 'center-left', textOffsetX: 6, textOffsetY: 0,
+        shapeAnchor: 'center-right', shapeOffsetX: -6, shapeOffsetY: 0,
+        message: 'Applied layout: text left, shape(s) right.'
+      },
+      'shape-left-text-right': {
+        textAnchor: 'center-right', textOffsetX: -6, textOffsetY: 0,
+        shapeAnchor: 'center-left', shapeOffsetX: 6, shapeOffsetY: 0,
+        message: 'Applied layout: shape(s) left, text right.'
+      },
+      'centered-overlap': {
+        textAnchor: 'center', textOffsetX: 0, textOffsetY: 0,
+        shapeAnchor: 'center', shapeOffsetX: 0, shapeOffsetY: 0,
+        message: 'Applied layout: centered overlap.'
+      }
+    };
+
+    var cfg = layoutMap[preset];
+    if (!cfg) return;
+
+    state.settings.textAnchor = cfg.textAnchor;
+    state.settings.textOffsetX = cfg.textOffsetX;
+    state.settings.textOffsetY = cfg.textOffsetY;
     state.settings.fitToSign = true;
     state.settings.graphics.forEach(function (g) {
-      g.anchor = 'bottom-center';
-      g.offsetX = 0;
-      g.offsetY = -6;
+      g.anchor = cfg.shapeAnchor;
+      g.offsetX = cfg.shapeOffsetX;
+      g.offsetY = cfg.shapeOffsetY;
     });
     autoFitAllGraphics(true);
     syncAllForms();
     renderGraphicsList();
     rebuildTextNow();
-    toast('Applied layout: text top, shape(s) bottom.', 'ok');
+    toast(cfg.message, 'ok');
   }
 
   function addGraphicFromBuilder(shapeOverride) {
@@ -1389,8 +1420,22 @@
     });
     $('#fit-all-graphics-btn').addEventListener('click', function(){ autoFitAllGraphics(false); });
     $('#graphics-help').insertAdjacentHTML('afterend',
-      '<div class="btn-row"><button class="btn btn-ghost" id="layout-top-bottom-btn" type="button" title="Place text at top and shapes at bottom">Layout: text top + shape bottom</button></div>');
-    $('#layout-top-bottom-btn').addEventListener('click', function(){ applyTextShapeLayout('text-top-shape-bottom'); });
+      '<div class="shape-layout-row">' +
+      '<label class="field"><span>Quick layout preset</span><select id="shape-layout-preset">' +
+      '<option value="">Choose a layout&hellip;</option>' +
+      '<option value="text-top-shape-bottom">Text top, shape bottom</option>' +
+      '<option value="shape-top-text-bottom">Shape top, text bottom</option>' +
+      '<option value="text-left-shape-right">Text left, shape right</option>' +
+      '<option value="shape-left-text-right">Shape left, text right</option>' +
+      '<option value="centered-overlap">Centered overlap</option>' +
+      '</select></label>' +
+      '<button class="btn btn-ghost" id="layout-apply-btn" type="button" title="Apply selected layout preset">Apply layout</button>' +
+      '</div>');
+    $('#layout-apply-btn').addEventListener('click', function(){
+      var preset = $('#shape-layout-preset').value;
+      if (!preset) { toast('Choose a layout preset first.', 'warn'); return; }
+      applyTextShapeLayout(preset);
+    });
     $('#clear-graphics-btn').addEventListener('click', function () {
       if (!state.settings.graphics.length) return;
       state.settings.graphics = [];
