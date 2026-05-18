@@ -449,6 +449,46 @@
   }
 
 
+
+  function renderShapeBuilderParams() {
+    var box = $('#shape-param-fields');
+    if (!box || !Forge.shapes || !Forge.shapes.SHAPES) return;
+    var shape = $('#shape-type').value;
+    var def = Forge.shapes.SHAPES[shape];
+    box.innerHTML = '';
+    if (!def || !Array.isArray(def.params)) return;
+    def.params.forEach(function (param) {
+      var lab = el('label', 'field');
+      lab.appendChild(el('span', null, param.key));
+      var inp = el('input');
+      inp.type = 'number'; inp.id = 'shape-param-' + param.key;
+      inp.step = 0.01;
+      if (param.min != null) inp.min = param.min;
+      if (param.max != null) inp.max = param.max;
+      inp.value = param.def;
+      lab.appendChild(inp);
+      box.appendChild(lab);
+    });
+  }
+
+  function initShapeBuilder() {
+    if (!Forge.shapes || !Forge.shapes.SHAPES) return;
+    var shapeSel = $('#shape-type');
+    var anchorSel = $('#shape-anchor');
+    if (!shapeSel || !anchorSel) return;
+    var anchors = ['center','top-left','top-center','top-right','mid-left','mid-right','bottom-left','bottom-center','bottom-right'];
+    anchors.forEach(function (a) { var o = el('option', null, a); o.value = a; anchorSel.appendChild(o); });
+    Object.keys(Forge.shapes.SHAPES).forEach(function (k) {
+      var d = Forge.shapes.SHAPES[k];
+      var o = el('option', null, d.label ? (d.label + ' (' + k + ')') : k);
+      o.value = k; shapeSel.appendChild(o);
+    });
+    shapeSel.value = 'arrow';
+    anchorSel.value = 'center';
+    shapeSel.addEventListener('change', renderShapeBuilderParams);
+    renderShapeBuilderParams();
+  }
+
   function renderGraphicsList() {
     var box = $('#graphics-list');
     var clearBtn = $('#clear-graphics-btn');
@@ -461,7 +501,18 @@
     box.appendChild(el('div', 'graphics-header', list.length + ' shape' + (list.length === 1 ? '' : 's') + ' in sign'));
     list.forEach(function (g, idx) {
       var row = el('div', 'graphics-row');
-      row.appendChild(el('div', 'svg-info-dims', (idx + 1) + '. ' + g.shape + ' · ' + round1(g.width) + '×' + round1(g.height) + 'mm @ ' + g.anchor));
+      var fields = el('div', 'graphics-row-fields');
+      function addNum(label, key, step) {
+        var lab = el('label', 'field'); lab.appendChild(el('span', null, label));
+        var inp = el('input'); inp.type='number'; inp.step=step || 1; inp.value = g[key] || 0;
+        inp.addEventListener('input', function(){ var v=parseFloat(inp.value); if(isFinite(v)){ g[key]=v; rebuildText(); renderGraphicsList(); }});
+        lab.appendChild(inp); fields.appendChild(lab);
+      }
+      addNum((idx + 1) + '. W', 'width', 1);
+      addNum('H', 'height', 1);
+      addNum('X offset', 'offsetX', 0.5);
+      addNum('Y offset', 'offsetY', 0.5);
+      row.appendChild(fields);
       var del = el('button', 'link-btn graphics-remove', 'Remove');
       del.type = 'button';
       del.setAttribute('aria-label', 'Remove shape ' + (idx + 1));
@@ -475,7 +526,7 @@
     });
   }
 
-  function addGraphicPrompt() {
+  function addGraphicFromBuilder(shapeOverride) {
     if (!Forge.shapes || !Forge.shapes.SHAPES) {
       toast('Shape library is unavailable right now.', 'warn');
       return;
@@ -485,14 +536,14 @@
       toast('No shapes are currently registered.', 'warn');
       return;
     }
-    var shape = window.prompt('Shape key (' + names.join(', ') + '):', 'arrow');
+    var shapeSel = $('#shape-type');
+    var shape = shapeOverride || (shapeSel ? String(shapeSel.value || '').trim() : '');
     if (!shape) return;
-    shape = String(shape).trim();
     if (!Forge.shapes.SHAPES[shape]) { toast('Unknown shape: ' + shape, 'warn'); return; }
 
-    var width = parseFloat(window.prompt('Shape width (mm):', '40'));
-    var height = parseFloat(window.prompt('Shape height (mm):', '20'));
-    var anchor = window.prompt('Anchor (center, top-left, top-center, top-right, mid-left, mid-right, bottom-left, bottom-center, bottom-right):', 'center');
+    var width = parseFloat($('#shape-width').value);
+    var height = parseFloat($('#shape-height').value);
+    var anchor = $('#shape-anchor').value || 'center';
     var validAnchors = {
       center: 1, 'top-left': 1, 'top-center': 1, 'top-right': 1,
       'mid-left': 1, 'mid-right': 1, 'bottom-left': 1, 'bottom-center': 1, 'bottom-right': 1
@@ -511,13 +562,9 @@
     var def = Forge.shapes.SHAPES[shape];
     if (def && Array.isArray(def.params)) {
       def.params.forEach(function (param) {
-        var promptVal = window.prompt(
-          shape + ' ' + param.key +
-          ' (' + param.min + ' to ' + param.max + '):',
-          String(param.def)
-        );
-        if (promptVal == null || promptVal === '') return;
-        var num = parseFloat(promptVal);
+        var inp = $('#shape-param-' + param.key);
+        if (!inp) return;
+        var num = parseFloat(inp.value);
         if (isFinite(num)) g.params[param.key] = num;
       });
     }
@@ -1041,7 +1088,9 @@
     $('#font-input').addEventListener('change', function () {
       onFontUpload(this.files[0]);
     });
-    $('#add-graphic-btn').addEventListener('click', addGraphicPrompt);
+    initShapeBuilder();
+    $('#add-graphic-btn').addEventListener('click', function(){ addGraphicFromBuilder(''); });
+    $('#add-border-btn').addEventListener('click', function(){ addGraphicFromBuilder('borderRect'); });
     $('#clear-graphics-btn').addEventListener('click', function () {
       if (!state.settings.graphics.length) return;
       state.settings.graphics = [];

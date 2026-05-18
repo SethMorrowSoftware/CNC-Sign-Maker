@@ -57,11 +57,21 @@
         </label>
         <div class="form-grid" id="form-text"></div>
         <button class="btn btn-block" id="font-upload-btn">Upload a font&hellip;</button>
-        <div class="btn-row" id="graphics-add-row">
-          <button class="btn" id="add-graphic-btn" title="Add a parametric shape graphic">Add shape</button>
-          <button class="btn btn-ghost" id="clear-graphics-btn" title="Remove all added shapes" disabled>Clear</button>
+        <div class="shape-builder" id="shape-builder">
+          <div class="shape-builder-grid">
+            <label class="field"><span>Shape</span><select id="shape-type"></select></label>
+            <label class="field"><span>Anchor</span><select id="shape-anchor"></select></label>
+            <label class="field"><span>Width (mm)</span><input id="shape-width" type="number" min="1" step="1" value="40"></label>
+            <label class="field"><span>Height (mm)</span><input id="shape-height" type="number" min="1" step="1" value="20"></label>
+          </div>
+          <div id="shape-param-fields" class="shape-builder-grid"></div>
+          <div class="btn-row" id="graphics-add-row">
+            <button class="btn" id="add-graphic-btn" title="Add a parametric shape graphic">Add shape</button>
+            <button class="btn" id="add-border-btn" title="Add a border shape">Add border</button>
+            <button class="btn btn-ghost" id="clear-graphics-btn" title="Remove all added shapes" disabled>Clear</button>
+          </div>
         </div>
-        <p class="muted small" id="graphics-help">Add reusable vector graphics (anchors to sign interior, scales in mm).</p>
+        <p class="muted small" id="graphics-help">Add reusable vector graphics and tune exact placement with X/Y offsets in the shape list.</p>
         <div id="graphics-list" class="svg-info hidden"></div>
         <input type="file" id="font-input" accept=".ttf,.otf,.woff" hidden>
       </div>
