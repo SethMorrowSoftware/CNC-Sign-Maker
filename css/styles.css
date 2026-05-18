@@ -180,12 +180,34 @@ button { font-family: inherit; cursor: pointer; }
 
 .graphics-row-fields {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 6px;
   flex: 1;
 }
 .graphics-row-fields .field > span { font-size: 10px; }
 .graphics-row-fields input, .graphics-row-fields select { padding: 5px 6px; font-size: 11px; }
+.graphics-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.graphics-row-title {
+  font-size: 11px;
+  color: var(--text);
+  font-weight: 600;
+}
+.graphics-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.btn-mini {
+  padding: 4px 7px;
+  font-size: 10.5px;
+}
 .sample-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .muted-label { font-size: 11px; color: var(--muted-2); }
 .link-btn {
