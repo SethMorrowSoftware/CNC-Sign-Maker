@@ -451,14 +451,20 @@
 
   function renderGraphicsList() {
     var box = $('#graphics-list');
+    var clearBtn = $('#clear-graphics-btn');
     if (!box) return;
     var list = state.settings.graphics || [];
+    if (clearBtn) clearBtn.disabled = !list.length;
     if (!list.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
     box.classList.remove('hidden');
     box.innerHTML = '';
+    box.appendChild(el('div', 'graphics-header', list.length + ' shape' + (list.length === 1 ? '' : 's') + ' in sign'));
     list.forEach(function (g, idx) {
-      var row = el('div', 'svg-info-dims', (idx + 1) + '. ' + g.shape + ' · ' + round1(g.width) + '×' + round1(g.height) + 'mm @ ' + g.anchor);
-      var del = el('button', 'link-btn', 'remove');
+      var row = el('div', 'graphics-row');
+      row.appendChild(el('div', 'svg-info-dims', (idx + 1) + '. ' + g.shape + ' · ' + round1(g.width) + '×' + round1(g.height) + 'mm @ ' + g.anchor));
+      var del = el('button', 'link-btn graphics-remove', 'Remove');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Remove shape ' + (idx + 1));
       del.addEventListener('click', function () {
         state.settings.graphics.splice(idx, 1);
         renderGraphicsList();
@@ -470,15 +476,29 @@
   }
 
   function addGraphicPrompt() {
+    if (!Forge.shapes || !Forge.shapes.SHAPES) {
+      toast('Shape library is unavailable right now.', 'warn');
+      return;
+    }
     var names = Object.keys(Forge.shapes.SHAPES);
+    if (!names.length) {
+      toast('No shapes are currently registered.', 'warn');
+      return;
+    }
     var shape = window.prompt('Shape key (' + names.join(', ') + '):', 'arrow');
     if (!shape) return;
+    shape = String(shape).trim();
     if (!Forge.shapes.SHAPES[shape]) { toast('Unknown shape: ' + shape, 'warn'); return; }
 
     var width = parseFloat(window.prompt('Shape width (mm):', '40'));
     var height = parseFloat(window.prompt('Shape height (mm):', '20'));
     var anchor = window.prompt('Anchor (center, top-left, top-center, top-right, mid-left, mid-right, bottom-left, bottom-center, bottom-right):', 'center');
-    if (!anchor) anchor = 'center';
+    var validAnchors = {
+      center: 1, 'top-left': 1, 'top-center': 1, 'top-right': 1,
+      'mid-left': 1, 'mid-right': 1, 'bottom-left': 1, 'bottom-center': 1, 'bottom-right': 1
+    };
+    anchor = anchor ? String(anchor).trim() : 'center';
+    if (!validAnchors[anchor]) anchor = 'center';
 
     var g = {
       id: 'g:' + Date.now(), shape: shape, anchor: anchor,
@@ -1023,6 +1043,7 @@
     });
     $('#add-graphic-btn').addEventListener('click', addGraphicPrompt);
     $('#clear-graphics-btn').addEventListener('click', function () {
+      if (!state.settings.graphics.length) return;
       state.settings.graphics = [];
       renderGraphicsList();
       rebuildTextNow();

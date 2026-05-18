@@ -131,6 +131,30 @@ button { font-family: inherit; cursor: pointer; }
 .svg-info-dims { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
 .svg-info-class { font-size: 11px; color: var(--muted-2); }
 .svg-info-warn { font-size: 11px; color: var(--warn); margin-top: 3px; }
+.graphics-header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; color: var(--muted-2); margin-bottom: 6px;
+}
+.graphics-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 7px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(13, 17, 23, 0.35);
+}
+.graphics-row .svg-info-dims { color: var(--text); font-size: 11px; line-height: 1.35; }
+.graphics-remove {
+  color: #ffb4ac;
+  text-decoration: none;
+  border: 1px solid rgba(248,81,73,0.4);
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+.graphics-remove:hover {
+  color: #ffd6d1;
+  border-color: rgba(248,81,73,0.7);
+  background: rgba(248,81,73,0.12);
+}
 
 .sample-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .muted-label { font-size: 11px; color: var(--muted-2); }
