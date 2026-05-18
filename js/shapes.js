@@ -36,6 +36,30 @@
         return [rectPath(0, 0, 1, 1), rectPath(t, t, 1 - 2 * t, 1 - 2 * t)];
       }
     },
+    roundedBorderRect: {
+      label: 'Rounded border',
+      params: [
+        { key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.45, def: 0.12, step: 0.01, unit: 'ratio' },
+        { key: 'radius', label: 'Corner radius', min: 0.03, max: 0.49, def: 0.16, step: 0.01, unit: 'ratio' }
+      ],
+      path: function (params) {
+        var t = clamp(params.thickness == null ? 0.12 : params.thickness, 0.03, 0.45);
+        var rOuter = clamp(params.radius == null ? 0.16 : params.radius, 0.03, 0.49);
+        var innerW = 1 - 2 * t;
+        var innerH = 1 - 2 * t;
+        if (innerW <= 0.01 || innerH <= 0.01) return [];
+        var rInner = clamp(rOuter - t, 0.01, Math.min(innerW, innerH) * 0.5 - 0.005);
+        return [
+          'M' + rOuter + ',0L' + (1 - rOuter) + ',0A' + rOuter + ',' + rOuter + ' 0 0 1 1,' + rOuter +
+            'L1,' + (1 - rOuter) + 'A' + rOuter + ',' + rOuter + ' 0 0 1 ' + (1 - rOuter) + ',1L' + rOuter + ',1A' + rOuter + ',' + rOuter +
+            ' 0 0 1 0,' + (1 - rOuter) + 'L0,' + rOuter + 'A' + rOuter + ',' + rOuter + ' 0 0 1 ' + rOuter + ',0Z',
+          'M' + (t + rInner) + ',' + t + 'L' + (1 - t - rInner) + ',' + t + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + (1 - t) + ',' + (t + rInner) +
+            'L' + (1 - t) + ',' + (1 - t - rInner) + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + (1 - t - rInner) + ',' + (1 - t) +
+            'L' + (t + rInner) + ',' + (1 - t) + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + t + ',' + (1 - t - rInner) +
+            'L' + t + ',' + (t + rInner) + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + (t + rInner) + ',' + t + 'Z'
+        ];
+      }
+    },
     circle: {
       label: 'Circle',
       params: [],

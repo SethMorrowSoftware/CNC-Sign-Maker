@@ -96,6 +96,7 @@
   }
 
   function round(v) { return Math.round(v * 1000) / 1000; }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   function anchorPoint(anchor, ix, iy, iW, iH) {
     switch (anchor) {
@@ -108,6 +109,18 @@
       case 'bottom-center': return { x: ix + iW / 2, y: iy + iH };
       case 'bottom-right': return { x: ix + iW, y: iy + iH };
       default: return { x: ix + iW / 2, y: iy + iH / 2 };
+    }
+  }
+  function anchoredPosition(anchor, ix, iy, iW, iH, w, h) {
+    var p = anchorPoint(anchor, ix, iy, iW, iH);
+    switch (anchor) {
+      case 'top-left': return { x: p.x, y: p.y };
+      case 'top-center': return { x: p.x - w / 2, y: p.y };
+      case 'top-right': return { x: p.x - w, y: p.y };
+      case 'bottom-left': return { x: p.x, y: p.y - h };
+      case 'bottom-center': return { x: p.x - w / 2, y: p.y - h };
+      case 'bottom-right': return { x: p.x - w, y: p.y - h };
+      default: return { x: p.x - w / 2, y: p.y - h / 2 };
     }
   }
 
@@ -189,9 +202,20 @@
 
     var parts = [];
     if (border) {
-      parts.push('<rect x="' + round(inset) + '" y="' + round(inset) +
-        '" width="' + round(signW - 2 * inset) + '" height="' +
-        round(signH - 2 * inset) + '" fill="none"/>');
+      var frameW = Math.max(1, signW - 2 * inset);
+      var frameH = Math.max(1, signH - 2 * inset);
+      var rounded = opts.borderStyle === 'rounded';
+      if (rounded) {
+        var rMax = Math.min(frameW, frameH) / 2;
+        var r = clamp(Math.max(0, opts.borderRadiusMm || 0), 0, rMax);
+        parts.push('<rect x="' + round(inset) + '" y="' + round(inset) +
+          '" width="' + round(frameW) + '" height="' + round(frameH) +
+          '" rx="' + round(r) + '" ry="' + round(r) + '" fill="none"/>');
+      } else {
+        parts.push('<rect x="' + round(inset) + '" y="' + round(inset) +
+          '" width="' + round(frameW) + '" height="' +
+          round(frameH) + '" fill="none"/>');
+      }
     }
     var graphics = Array.isArray(opts.graphics) ? opts.graphics : [];
     graphics.forEach(function (g) {
@@ -210,9 +234,12 @@
         // never let an explicit height overflow the sign interior
         s = Math.min(s, iW / tw, iH / th);
       }
-      // centre the scaled text block inside the interior
-      var tx = ix + (iW - tw * s) / 2 - box.x1 * s;
-      var ty = iy + (iH - th * s) / 2 - box.y1 * s;
+      var textW = tw * s;
+      var textH = th * s;
+      var textAnchor = opts.textAnchor || 'center';
+      var base = anchoredPosition(textAnchor, ix, iy, iW, iH, textW, textH);
+      var tx = base.x - box.x1 * s + (opts.textOffsetX || 0);
+      var ty = base.y - box.y1 * s + (opts.textOffsetY || 0);
       // opentype emits glyph contours without an explicit close command — add
       // a Z to each so every subpath reads as a closed polygon downstream.
       var d = combined.toPathData(3).split('M')

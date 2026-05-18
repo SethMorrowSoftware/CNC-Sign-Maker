@@ -21,6 +21,7 @@
     var scene = null;
     var dpr = 1, cssW = 0, cssH = 0;
     var hover = null, dragging = false, lastX = 0, lastY = 0;
+    var customDrag = null;
     var options = { showRapids: true, showTabs: true, showGeometry: true };
 
     var tip = document.createElement('div');
@@ -277,6 +278,22 @@
     }, { passive: false });
 
     canvas.addEventListener('mousedown', function (e) {
+      if (e.button === 0 && scene && scene.interaction &&
+          typeof scene.interaction.onPointerDown === 'function') {
+        var r0 = canvas.getBoundingClientRect();
+        var sx0 = e.clientX - r0.left, sy0 = e.clientY - r0.top;
+        var start = scene.interaction.onPointerDown({
+          worldX: toWorldX(sx0), worldY: toWorldY(sy0),
+          screenX: sx0, screenY: sy0, event: e
+        });
+        if (start && start.capture) {
+          customDrag = start;
+          dragging = false;
+          canvas.style.cursor = 'grabbing';
+          e.preventDefault();
+          return;
+        }
+      }
       if (e.button === 1 || e.button === 0) {
         dragging = true; lastX = e.clientX; lastY = e.clientY;
         canvas.style.cursor = 'grabbing';
@@ -284,11 +301,19 @@
       }
     });
     window.addEventListener('mouseup', function () {
+      if (customDrag && typeof customDrag.onEnd === 'function') customDrag.onEnd();
+      customDrag = null;
       dragging = false; canvas.style.cursor = '';
     });
     canvas.addEventListener('mousemove', function (e) {
       var r = canvas.getBoundingClientRect();
-      if (dragging) {
+      if (customDrag && typeof customDrag.onMove === 'function') {
+        var sxm = e.clientX - r.left, sym = e.clientY - r.top;
+        customDrag.onMove({
+          worldX: toWorldX(sxm), worldY: toWorldY(sym),
+          screenX: sxm, screenY: sym, event: e
+        });
+      } else if (dragging) {
         view.panX += e.clientX - lastX;
         view.panY -= e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;
