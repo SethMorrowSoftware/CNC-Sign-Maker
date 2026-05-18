@@ -68,12 +68,14 @@
     var zOff = ctx.airPass ? (ctx.airPassOffset || 25) : 0;
     var safeZ = (s.safeZ != null ? s.safeZ : 10) + zOff;
     var rpm = s.spindleRpm || 18000;
-    var depths = Forge.toolpath.computeDepths(s.finalDepth || -1, s.docPerPass || 1);
+    var depths = Forge.toolpath.computeDepths(
+      s.finalDepth != null ? s.finalDepth : -1,
+      s.docPerPass != null ? s.docPerPass : 1);
 
     var tokens = {
       job: ctx.jobName || 'job',
-      material: ctx.material ? ctx.material.name : 'unspecified',
-      bit: ctx.bit ? ctx.bit.name : 'unspecified',
+      material: ctx.material && ctx.material.name ? ctx.material.name : 'unspecified',
+      bit: ctx.bit && ctx.bit.name ? ctx.bit.name : 'unspecified',
       operation: s.operation || 'engrave',
       depth: s.finalDepth,
       doc: s.docPerPass,
@@ -94,10 +96,15 @@
     } else {
       L.push('; ====== ' + tokens.job + ' ======');
       L.push('; Material: ' + tokens.material);
-      L.push('; Bit: ' + tokens.bit +
-        (ctx.bit ? ' (' + ctx.bit.diameter_mm + 'mm, ' + ctx.bit.type +
-          (ctx.bit.v_angle_deg > 0 ? ', ' + ctx.bit.v_angle_deg + ' deg' : '') +
-          ')' : ''));
+      var bitDetail = '';
+      if (ctx.bit) {
+        var bd = [];
+        if (ctx.bit.diameter_mm != null) bd.push(ctx.bit.diameter_mm + 'mm');
+        if (ctx.bit.type) bd.push(ctx.bit.type);
+        if (ctx.bit.v_angle_deg > 0) bd.push(ctx.bit.v_angle_deg + ' deg');
+        if (bd.length) bitDetail = ' (' + bd.join(', ') + ')';
+      }
+      L.push('; Bit: ' + tokens.bit + bitDetail);
       L.push('; Operation: ' + tokens.operation);
       L.push('; Final depth: ' + s.finalDepth + 'mm   DOC: ' + s.docPerPass +
         'mm x ' + depths.length + ' passes');
@@ -131,7 +138,11 @@
     // cx/cy/cz hold the last *emitted* coordinate, rounded to output
     // precision, so float noise can never emit a redundant axis word.
     var cx = null, cy = null, cz = null;
-    function q(n) { var r = Math.round(n * 1000) / 1000; return r === 0 ? 0 : r; }
+    function q(n) {
+      if (!isFinite(n)) return 0;   // last-ditch guard — never emit X/Y/ZNaN
+      var r = Math.round(n * 1000) / 1000;
+      return r === 0 ? 0 : r;
+    }
 
     function moveWords(m) {
       var w = '';

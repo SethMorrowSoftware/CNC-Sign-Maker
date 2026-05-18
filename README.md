@@ -1,23 +1,74 @@
 # LowRider Forge
 
-A self-hosted web tool that turns **typed text or SVG files** into
-FluidNC-compatible gcode for the **LowRider v4** CNC. Built for engraving and
-cutting signs, fixtures and parts with predictable, repeatable output.
+A self-hosted web tool that turns **typed text, parametric shapes and uploaded
+SVG files** into FluidNC-compatible gcode for the **LowRider v4** CNC. Built for
+engraving and cutting signs, plaques, fixtures and parts with predictable,
+repeatable output.
 
-Make a sign straight from the built-in **text sign generator** — pick a font,
-set the sign size, type the text — or upload an SVG of your own artwork.
+Lay out a sign straight from the built-in **text generator** — pick a font, set
+the sign size, type the text, drop in shapes and a border — or **upload an SVG**
+of your own artwork. Every cut is previewed on a live canvas before a single
+line of gcode is written.
 
-All geometry and gcode generation runs **client-side** in the browser — the
-PHP backend only stores bits, materials, presets and (optionally) finished
-gcode. The tool keeps working with no network once the page has loaded.
+All geometry and gcode generation runs **client-side in the browser**. The PHP
+backend only stores bits, materials, presets and (optionally) finished gcode, so
+the core of the tool keeps working even when the backend is unreachable.
 
 ---
 
+## Contents
+
+- [Highlights](#highlights)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [The interface](#the-interface)
+- [Artwork](#artwork)
+  - [Text signs](#text-signs)
+  - [The shape builder](#the-shape-builder)
+  - [SVG upload](#svg-upload)
+- [Operations](#operations)
+- [Settings reference](#settings-reference)
+- [Materials &amp; bits](#materials--bits)
+- [Job presets](#job-presets)
+- [Pre-flight validation](#pre-flight-validation)
+- [The preview](#the-preview)
+- [Generating gcode](#generating-gcode)
+- [API](#api)
+- [Project layout](#project-layout)
+- [Troubleshooting](#troubleshooting)
+- [Known limitations](#known-limitations)
+
+---
+
+## Highlights
+
+- **Text-sign generator** — type a sign, choose a font, auto-fit the text or set
+  an exact letter height, align and nudge it, and cut a square or rounded frame.
+- **Parametric shape builder** — drop in arrows, stars, hexagons, rings, pills,
+  borders and more, sized in millimetres, each with its own anchor, offset and
+  rotation. Quick-layout presets arrange text and shapes in one click.
+- **Six operations** — engrave, pocket, V-carve, profile-out, profile-in and
+  drill — selectable per job.
+- **Live toolpath preview** — machine envelope, stock, reference geometry, the
+  colour-coded toolpath, rapid moves, holding tabs and the work origin, all
+  redrawn as you tune settings. Drag text and shapes directly on the canvas.
+- **Pre-flight validation** — blocks dangerous jobs and surfaces hard-won CNC
+  gotchas (thin tabs, melt-prone tooling, over-deep cuts) before any gcode is
+  generated.
+- **Documented, reproducible gcode** — every file carries a header recording
+  every parameter used. An *air pass* option re-emits the job 25&nbsp;mm above
+  the stock so you can dry-run the toolpath in space first.
+- **Material &amp; bit library** — a seeded sign-shop starter set you can edit,
+  extend and save job presets against.
+- **Self-hosted, no build step** — vanilla HTML/CSS/JavaScript plus a tiny
+  PHP&nbsp;+&nbsp;SQLite backend. No framework, no package manager, no compile.
+
 ## Requirements
 
-- PHP **8.1+** with the `pdo_sqlite` extension (bundled with most PHP builds).
-- A modern browser (Chrome, Firefox, Edge, Safari — ES2020+).
-- No build step, no package manager, no framework.
+- **PHP 8.1+** with the `pdo_sqlite` extension (bundled with most PHP builds).
+- A modern browser — Chrome, Firefox, Edge or Safari (ES2020+).
+- No build step, no Node, no package manager, no framework.
 
 ## Install
 
@@ -37,29 +88,290 @@ Then open <http://localhost:8000>.
 1. Upload the project folder into — or next to — `public_html`, for example
    `public_html/forge/`.
 2. In cPanel **MultiPHP Manager**, set that directory to **PHP 8.1 or newer**.
-3. Make sure `data/` is writable by the account. On the suEXEC / PHP-FPM
-   setup cPanel uses by default a `0755` directory is enough.
-4. Open the URL. The SQLite database is created and seeded automatically on
-   the first request — no build step, no SSH, no `install.sh` required.
+3. Make sure `data/` is writable by the account. On the suEXEC / PHP-FPM setup
+   cPanel uses by default a `0755` directory is enough.
+4. Open the URL. The SQLite database is created and seeded automatically on the
+   first request — no build step, no SSH, no `install.sh` required.
 
 The app never assumes its install path, so a subdirectory
 (`example.com/forge/`) behaves exactly like a document root. The database
 deliberately uses a rollback journal rather than WAL, because cPanel home
 directories are usually NFS-backed and SQLite's WAL mode is not NFS-safe.
 
+## Quick start
+
+1. **Choose your artwork.** Type sign text (the default) or switch to *Upload
+   SVG* at the top of the Artwork panel.
+2. **Pick an operation** — engrave, pocket, V-carve, profile-out, profile-in or
+   drill.
+3. **Choose a material and bit.** Selecting a material auto-fills the
+   recommended feeds, depth of cut and final depth.
+4. **Tune the settings** in the right-hand tabs (Operation, Tabs, Geometry,
+   Machine, Bit, Material).
+5. **Watch the preview** — the machine envelope, stock, toolpath, tabs and work
+   origin update live.
+6. **Clear the pre-flight checks.** Any error blocks gcode generation.
+7. **Generate gcode**, review it, then download — or download an *air pass*
+   first to dry-run the toolpath 25&nbsp;mm above the material.
+
+Your settings, selected bit and material are autosaved to the browser, so the
+session is restored when you reload the page.
+
+## The interface
+
+A single-page app in three columns (stacked on narrow screens):
+
+| Column | Contents |
+|--------|----------|
+| **Left** | Artwork (text or SVG), operation picker, material &amp; bit pickers, job presets, pre-flight checks, the **Generate gcode** button. |
+| **Centre** | The live toolpath preview and its toolbar. |
+| **Right** | Settings tabs (Operation, Tabs, Geometry, Machine, Bit, Material) and a live job summary — stock size, runtime estimate, Z-pass count and chip load. |
+
+## Artwork
+
+Start every job from one of two sources, chosen with the switch at the top of
+the Artwork panel.
+
+### Text signs
+
+The text generator lays your text out in a chosen font and feeds it into the
+same toolpath pipeline as an uploaded SVG — the sign generator is just another
+geometry source.
+
+- **Fonts.** The picker ships with a type library spanning sans, condensed,
+  heavy, slab, serif, display, script and hand-lettered faces. Six core faces
+  are bundled with the tool; the rest are fetched the first time you select
+  them. You can also **upload your own** `.ttf`, `.otf` or `.woff` font.
+- **Sizing.** Set the sign width and height in millimetres, then either let the
+  text **auto-fit** the usable area or switch off *Fit text to sign* and dial in
+  an exact **letter height** (capital-letter height).
+- **Placement.** Choose an alignment (left / centre / right), a placement
+  anchor (centre, the four corners, the top/bottom edges), and nudge the text
+  with X/Y offsets. Line spacing and letter spacing are tunable. You can also
+  **drag the text directly on the preview** to reposition it.
+- **Frame.** Optionally cut a frame border with square or rounded corners, set
+  its inset from the sign edge, its corner radius, and the padding between the
+  text and the frame.
+
+For lettering, match the operation to the look you want:
+
+- **Outline** — pick **Engrave** to trace each letter's outline.
+- **Filled** — pick **Pocket** to clear each letter solid. Counters (the holes
+  in O, A, e) are kept automatically.
+- **V-carved** — pick **V-carve** with a V-bit for crisp, true V-cut lettering.
+
+Cutting the sign blank to its outside size is a separate job — use a pre-cut
+blank, or profile-out a rectangle.
+
+### The shape builder
+
+Below the text controls, the shape builder adds reusable parametric vector
+graphics to the sign — all sized in millimetres:
+
+- **Shapes** — rectangle, rounded rectangle, ellipse, circle, hexagon, diamond,
+  star, arrows (left/right), pill, and matching **border** variants
+  (rectangular, rounded, ellipse, hexagon, pill, ring).
+- Each shape has a **width, height, anchor, X/Y offset and rotation**, plus
+  shape-specific parameters (corner radius, border thickness, star points,
+  arrow head/shaft ratios, and so on).
+- **Add shape** drops in the shape configured at the top of the builder;
+  **Add border** drops in a border framed to the sign.
+- **Auto-fit** scales a shape to the usable sign area (with or without keeping
+  its aspect ratio); **Auto-fit all** does every shape at once.
+- **Quick layout presets** arrange the text and shapes together — text above /
+  shape below, side by side, centred overlap, and so on.
+- Shapes can also be **dragged on the preview** to reposition them.
+
+### SVG upload
+
+Switch to *Upload SVG* to drop in your own artwork. The parser walks every
+element, applies nested transforms, resolves units to millimetres and
+tessellates curves (`C / S / Q / T / A`) into line segments at a controllable
+tolerance. It handles paths, rectangles, circles, ellipses, lines, polylines,
+polygons and `<use>` references from Inkscape, Illustrator, Affinity, OpenSCAD
+and hand-made files.
+
+Each closed subpath is classified as an **outer profile** or a **hole** by area
+(the *hole-vs-trace threshold*); open subpaths become engraving lines. Four test
+SVGs ship in `samples/` — a square, a circle, a holes plate and a text sign.
+
+> `<text>` elements are not rasterised — convert text to paths before export,
+> or use the built-in text generator.
+
+## Operations
+
+| Operation | What it does |
+|-----------|--------------|
+| **Engrave** | Traces the path centreline at a single depth. No tool compensation — outline lettering for text, plus open engraving lines. |
+| **Pocket** | Clears the inside of every closed shape with concentric passes — solid, filled lettering. Counters (the holes in O, A, e) are kept. |
+| **V-carve** | V-carves closed shapes with a V-bit for crisp V-cut lettering. Cut depth follows the bit's included angle so the flanks meet the surface exactly on the outline; the final depth caps how deep wide areas go. |
+| **Profile out** | Cuts **outside** a closed path (tool radius + finishing allowance). Multi-depth, with holding tabs. |
+| **Profile in** | Cuts **inside** a closed path — pockets and opening cutouts. Multi-depth. |
+| **Drill** | Plunge- or circle-bores each closed feature. Holes smaller than the bit are plunge-drilled oversized. |
+
+**Cut order.** Small closed features (below the *hole-vs-trace threshold*) are
+always given a drill cycle and emitted **first**, while the bit is freshest;
+outer profiles are emitted **last**, because once the outline is cut the part
+can move.
+
+**Holding tabs.** On profile-out jobs, tabs leave thin material bridges so the
+part stays connected to the stock. Tabs are evenly spaced and the tab Z profile
+is applied on **every depth pass** — an intermediate pass can never cut straight
+through a tab and break the part loose before the job finishes.
+
+## Settings reference
+
+Settings live in the six right-hand tabs.
+
+**Operation** — final depth (negative = below the surface), depth of cut per
+pass, cut feed, plunge feed, finishing allowance, tool-offset override (0 =
+auto: tool radius + finishing), plunge style (straight / peck / helical-ramp)
+and peck-retract height.
+
+**Tabs** *(profile-out only)* — enable tabs, tabs per profile, tab thickness
+(material left under the bit) and tab width (the flat-top length along the
+perimeter).
+
+**Geometry** — uniform scale, rotation (0 / 90 / 180 / 270°), origin position,
+custom origin X/Y, stock margin, the hole-vs-trace area threshold, a target hole
+diameter, and the curve tessellation tolerance.
+
+**Machine** — job name, machine cutting area X/Y, safe Z, pre-stock Z, rapid
+feed (for runtime estimates), spindle RPM, an M0-pause toggle, the output
+filename pattern and an optional header-comment template.
+
+**Bit** — name, cutting diameter, shank diameter, flute count, cutting length,
+type (upcut / downcut / compression / O-flute / V-bit), V-bit included angle and
+notes. **Update / Save as new / Delete** manage the bit library.
+
+**Material** — name, thickness, recommended bit type, recommended RPM, cut and
+plunge feeds, recommended DOC, through-cut overage and notes. The same
+**Update / Save as new / Delete** controls manage the material library.
+
+### The work origin
+
+By default the work origin is the **front-left corner of the stock**, with
+**Z = 0 on top of the material** — the recommended setup, which keeps every
+coordinate positive. The Geometry tab can move the origin to the centre,
+top-left or a custom point; with the centre or top-left origin the toolpath
+spans negative coordinates by design, so set the machine work zero at that
+point. The gcode header states the origin used on every file.
+
+## Materials & bits
+
+The database is seeded on first run with a sign-shop starter set — end mills,
+O-flutes, compression bits, V-bits and ball-nose bits, plus materials covering
+foam, PVC board, HDPE, plywood, MDF, hardboard, acrylic, composite panel,
+hardwood and aluminium. Selecting a material auto-fills the recommended feeds,
+DOC and (for through-cuts) the final depth.
+
+Everything is editable: change a value and **Update** it, **Save as new** to
+branch a variant, or **Delete** it. New entries you create are kept in the
+SQLite database.
+
+## Job presets
+
+A preset captures the full job — operation, bit, material and every setting.
+**Save current settings as preset** stores it on the server; the **Job presets**
+picker loads or deletes saved presets. Four sample presets ship with the tool
+(foam engrave, plywood profile-cut with tabs, HDPE 2-colour sign engrave and an
+aluminium 6061 profile).
+
+## Pre-flight validation
+
+Before any gcode can be generated, the validator runs a battery of safety
+checks. Anything at **error** level blocks generation; warnings and info notices
+are advisory. Many issues offer a one-click **Apply fix**.
+
+The validator encodes the hard-won lessons from real bench time:
+
+- **M0 pauses are off by default** — they silently halt the program. Turning
+  them on raises an info banner.
+- **Tabs below 1&nbsp;mm thick are blocked**; above 2&nbsp;mm raises a
+  flush-trim warning.
+- **HDPE with a multi-flute bit is a blocking error** — multi-flute bits melt
+  HDPE. Acrylic with a multi-flute bit raises a warning.
+- **Bit cutting length** is checked against the depth the toolpath actually
+  reaches (with a 2&nbsp;mm safety margin).
+- **Chip load** is checked against the 0.05–0.30&nbsp;mm window.
+- **The machine envelope** is checked; if the job would fit rotated, a 90°
+  rotation is offered.
+- **Through-cut depth** is sanity-checked against material thickness and the
+  spoilboard overage.
+- **V-carving** requires a V-bit with a valid included angle.
+- **Parametric-looking parts** trigger an info banner suggesting you regenerate
+  the SVG at the correct size rather than scaling it.
+- **Nominal plywood thickness** is flagged — measure your actual stock.
+
+## The preview
+
+The centre canvas draws the machine envelope (dashed blue), the stock (grey
+fill), the reference geometry, the colour-coded toolpath, rapid moves, holding
+tabs (red ✕) and the work origin (red crosshair at 0,0).
+
+- **Pan** — drag with the left or middle mouse button.
+- **Zoom** — scroll the wheel, or use the **+ / − / Fit** buttons.
+- **Hover** — a tooltip shows X, Y, current Z and feed rate.
+- **Toggles** — show or hide rapids, tabs and the reference geometry.
+- In text mode, **left-drag the text or any shape** directly on the canvas to
+  reposition it.
+
+## Generating gcode
+
+Every generated file follows a fixed structure: a documented header, a safe
+preamble (`G21 G90 G94 G17`, spindle off, rapid to safe Z, optional M0 pause,
+`M3 S`), the operation body (drills first, profiles last, with a comment per
+operation) and a footer that parks the machine (`G0 Z`, `G0 X0 Y0`, `M5`,
+optional M0, `M30`).
+
+- **The header** records the job name, material, bit, operation, final depth and
+  pass count, spindle RPM (with the matching Makita dial number), feeds, the
+  work origin, the stock size, the machine-envelope check result and the
+  generation timestamp.
+- **Air pass** — the modal can re-emit the whole job with every Z raised
+  25&nbsp;mm so you can dry-run the toolpath above the stock before cutting.
+- **Filename** — built from a template (`{job}_{material}_{bit}_{date}.gcode` by
+  default); air-pass files are prefixed `AIRPASS_`.
+- **Coordinates** are emitted with explicit per-segment feeds; full circles use
+  `G2/G3` with `I/J` centre offsets. Non-finite coordinates can never reach the
+  file.
+
+From the modal you can **Copy** the gcode, **Download** the `.gcode` file, or
+**Save to server** to keep a copy in `data/jobs/`.
+
+## API
+
+All endpoints are served by `api/index.php` and return JSON. The client
+addresses them with a query-string route — `api/index.php?r=bits/3` — because
+`PATH_INFO` is not reliably populated on shared cPanel PHP-FPM / CGI setups. The
+`PATH_INFO` form (`api/index.php/bits/3`) still works as a fallback.
+
+```
+GET/POST/PUT/DELETE   bits          bits/:id
+GET/POST/PUT/DELETE   materials     materials/:id
+GET/POST/DELETE       presets       presets/:id
+POST                  jobs/save     persist generated gcode
+GET                   jobs          jobs/:id   (download)
+GET                   health
+```
+
+No authentication — the tool assumes a trusted local network (see *Known
+limitations*).
+
 ## Project layout
 
 ```
-index.html              Single-page app
-css/styles.css           Theme
+index.html               Single-page app
+css/styles.css            Theme
 js/
-  app.js                 State, form generation, event wiring
+  app.js                  State, form generation, event wiring
   svg-parser.js           SVG -> millimetre geometry (transforms, units, curves)
   text-geometry.js        Typed text + font -> sign geometry
+  shapes.js               Parametric shape library
   geometry.js             Polygon offsetting (Clipper) + geometry helpers
-  toolpath.js             Operation toolpaths (engrave/pocket/profile/drill)
+  toolpath.js             Operation toolpaths (engrave/pocket/v-carve/profile/drill)
   gcode-emitter.js        Toolpath -> FluidNC gcode
-  preview.js              Canvas rendering, pan/zoom, hover
+  preview.js              Canvas rendering, pan/zoom, hover, drag
   validation.js           Pre-flight safety checks
   presets.js              API client + LocalStorage autosave
   lib/clipper.js          Vendored Clipper 6.4.2 (Boost license)
@@ -73,86 +385,14 @@ fonts/                    Bundled open-licensed sign fonts (+ their licenses)
 samples/                  Test SVGs (square, circle, holes plate, text)
 ```
 
-## Workflow
-
-Start from **typed text** or an **SVG file** — use the switch at the top of the
-artwork panel.
-
-1. **Type your sign text** (choose a font and sign size), or **upload an SVG**.
-2. **Pick the operation** — engrave, pocket, profile-out, profile-in or drill.
-3. **Choose material and bit.** Selecting a material auto-fills the
-   recommended feeds, DOC and depth.
-4. **Tune settings** in the right-hand tabs (Operation, Tabs, Geometry,
-   Machine, Bit, Material).
-5. **Watch the preview** — machine envelope, stock, toolpath, tabs and the
-   work origin update live.
-6. **Clear the pre-flight checks.** Errors block gcode generation.
-7. **Generate gcode**, review it, then download — or download an *air pass*
-   (all Z raised 25 mm) to dry-run the toolpath first.
-
-By default the work origin is the **front-left corner of the stock**, with
-**Z = 0 on top of the material** — the recommended setup. The Geometry tab can
-move the origin to the centre, top-left or a custom point; with the centre or
-top-left origin the toolpath spans negative coordinates by design, so set the
-machine work zero at that point. The gcode header states the origin used on
-every file.
-
-## Text signs
-
-The text generator lays out your text in a chosen font and feeds it into the
-same toolpath pipeline as an SVG. Six fonts ship with the tool (sans,
-condensed, heavy, slab, serif and script); you can also upload your own
-`.ttf` / `.otf`. For lettering:
-
-- **Outline** — pick the *Engrave* operation to trace each letter's outline.
-- **Filled** — pick the *Pocket* operation to clear each letter solid.
-- **V-carved** — pick the *V-carve* operation with a V-bit for crisp, true
-  V-cut lettering. The cut depth follows the bit's included angle, so the
-  flanks meet the surface exactly on the outline; the final depth caps how
-  deep wide areas go.
-
-Set a letter height, or let the text auto-fit the sign, and optionally cut a
-frame border. Cutting the sign blank to its outside size is a separate job —
-use a pre-cut blank, or profile-out a rectangle.
-
-## Operations
-
-| Operation    | What it does |
-|--------------|--------------|
-| Engrave      | Traces the path centerline at one depth. No tool compensation. Outline lettering for text. |
-| Pocket       | Clears the inside of every closed shape with concentric passes — solid, filled lettering. Counters (the holes in O, A, e) are kept. |
-| V-carve      | V-carves closed shapes with a V-bit — crisp V-cut lettering. Depth follows the bit's included angle; the final depth caps how deep wide areas go. |
-| Profile out  | Cuts outside a closed path (tool radius + finishing). Multi-depth, tabs on the final pass. |
-| Profile in   | Cuts inside a closed path — pockets and openings. Multi-depth. |
-| Drill        | Plunge or helical-bore each closed feature. Holes smaller than the bit are plunge-drilled oversized. |
-
-Small closed features (below the *hole-vs-trace threshold*) are always given a
-drill cycle and emitted **first**, while the bit is freshest; outer profiles
-are emitted **last** because once cut, the part can move.
-
-## Codified gotchas
-
-The validator encodes the hard-won lessons from spec section 14:
-
-- **M0 pauses are off by default** — they silently halt the program. Turning
-  them on raises an info banner.
-- **Tabs below 1 mm are blocked**; above 2 mm raises a flush-trim warning.
-- **HDPE + multi-flute bit is a blocking error** — multi-flute bits melt HDPE.
-- **Bit cutting length is checked** against final depth (`|depth| + 2 mm`).
-- **Chip load** is checked against the 0.05–0.30 mm window.
-- **Through-cut depth** is sanity-checked against material thickness and the
-  spoilboard overage.
-- **Parametric parts** trigger an info banner suggesting you regenerate the
-  SVG at the correct size rather than scaling it.
-- Nominal **plywood thickness** is flagged — measure your actual stock.
-
 ## Troubleshooting
 
 - **Axes move the wrong direction.** This is a FluidNC config issue, out of
   scope for this tool. Add the `:low` modifier to the motor `direction_pin` in
   your controller YAML — and remember `:low` *must be single-quoted in YAML*.
 - **Job size looks wrong after upload.** If the SVG had no explicit units the
-  size is assumed at 96 dpi; correct it with the *Scale* setting.
+  size is assumed at 96&nbsp;dpi; correct it with the *Scale* setting. The SVG
+  info panel flags files with no physical units.
 - **"Backend unavailable".** gcode generation still works fully — only preset,
   bit and material storage needs PHP. Check that `data/` is writable and that
   the `pdo_sqlite` extension is enabled (cPanel → *Select PHP Version* →
@@ -160,37 +400,25 @@ The validator encodes the hard-won lessons from spec section 14:
 - **HTTP 500 on every page.** A small number of hosts forbid `Options` in
   `.htaccess`. If so, delete the `Options -Indexes` line from the root
   `.htaccess`.
-- **An inside cut is skipped.** The contour was too small to offset inward
-  with the chosen bit. Use a smaller bit or a different operation.
+- **An inside cut is skipped.** The contour was too small to offset inward with
+  the chosen bit. Use a smaller bit or a different operation.
+- **A request body was dropped (HTTP 413).** A large preset or saved job
+  exceeded the host `post_max_size`; raise it in cPanel *MultiPHP INI Editor*.
 
-## API
-
-All endpoints are served by `api/index.php` and return JSON. The client
-addresses them with a query-string route — `api/index.php?r=bits/3` — because
-`PATH_INFO` is not reliably populated on shared cPanel PHP-FPM / CGI setups.
-The `PATH_INFO` form (`api/index.php/bits/3`) still works as a fallback.
-
-```
-GET/POST/PUT/DELETE  bits          bits/:id
-GET/POST/PUT/DELETE  materials     materials/:id
-GET/POST/DELETE      presets       presets/:id
-POST                 jobs/save     persist generated gcode
-GET                  jobs          jobs/:id  (download)
-GET                  health
-```
-
-## Known limitations (v1)
+## Known limitations
 
 - Polygon offsetting handles the common cases well; pathological
   self-intersecting input may need manual review (flagged by the validator).
 - Manual tab placement (drag-on-canvas) is not yet implemented — tabs are
   evenly spaced.
-- Profile-out and profile-in offset *every* contour the same way. A part with
-  an interior window needs two operations — profile-out for the outer edge,
+- Profile-out and profile-in offset *every* contour the same way. A part with an
+  interior window needs two operations — profile-out for the outer edge and
   profile-in for the window — and the validator flags this when it sees nested
   contours.
-- `<text>` elements are not rasterised; convert text to paths before export.
-- Arc *fitting* is not done — curves are emitted as tessellated polylines
-  except for the drill-circle cycle, which uses true `G2`.
+- `<text>` elements in uploaded SVGs are not rasterised; convert text to paths
+  before export, or use the built-in text generator.
+- Arc *fitting* is not done — curves are emitted as tessellated polylines,
+  except the drill-circle cycle, which uses true `G2`.
+- There is no authentication; deploy the tool only on a trusted local network.
 
 See `spec.md` for the full design specification.

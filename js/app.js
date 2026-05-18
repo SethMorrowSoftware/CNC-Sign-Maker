@@ -336,6 +336,8 @@
 
   function recomputeNow() {
     var s = state.settings;
+    // The empty-state overlay always tracks whether artwork is loaded.
+    $('#preview-empty').classList.toggle('hidden', !!state.geometry);
     if (!state.geometry) {
       state.job = state.toolpath = state.validation = null;
       preview.draw({ machineX: s.machineX, machineY: s.machineY });
@@ -550,9 +552,14 @@
     if (mode === 'text') {
       if (state.font) { rebuildTextNow(); preview.fit(); }
       else loadFontThen(function () { rebuildTextNow(); preview.fit(); });
-    } else {
+    } else if (state.svgText) {
       reparseAndRecompute();
       if (state.geometry) preview.fit();
+    } else {
+      // SVG mode with nothing uploaded — drop any leftover text geometry so
+      // the preview shows the empty state, not the previous sign.
+      state.geometry = null;
+      recomputeNow();
     }
   }
 
@@ -1315,10 +1322,11 @@
 
   function onSettingChange(key, value, field) {
     state.settings[key] = value;
-    if (field && field.dependsOn === undefined) {
-      refreshVisibility(forms.geometry, SCHEMA.geometry, state.settings);
-      refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
-    }
+    // Always refresh dependent-field visibility — changing a field that
+    // others depend on (e.g. frameStyle -> frameCornerRadius) must update
+    // them right away, even when the changed field is itself a dependent.
+    refreshVisibility(forms.geometry, SCHEMA.geometry, state.settings);
+    refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
     if (key === 'tessellationTolerance') regenerate();
     else if (TEXT_KEYS[key]) {
       if (state.settings.inputMode === 'text') rebuildText();

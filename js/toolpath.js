@@ -39,6 +39,12 @@
 
     var moved = geometry.subpaths.map(function (sp) {
       return { points: sp.points.map(place), closed: sp.closed };
+    }).filter(function (sp) {
+      // Drop any subpath carrying a non-finite coordinate so a malformed SVG
+      // (overflowing transform, degenerate arc) can never reach the gcode.
+      return sp.points.length > 0 && sp.points.every(function (p) {
+        return isFinite(p[0]) && isFinite(p[1]);
+      });
     });
 
     var b = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
@@ -63,6 +69,11 @@
     }
 
     var margin = s.stockMargin != null ? s.stockMargin : 10;
+    // A fully degenerate input (every subpath dropped) leaves b unbounded —
+    // collapse it to the origin so stock size and placement stay finite.
+    if (!isFinite(b.minX)) {
+      b = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    }
     var tx, ty;
     if (s.originPosition === 'center') {
       tx = -(b.minX + b.maxX) / 2; ty = -(b.minY + b.maxY) / 2;
@@ -234,12 +245,14 @@
   }
 
   /**
-   * Cut one closed polygon at `depth`. Handles tab lifts on the final pass
-   * and helical (ramped) entry. Returns { moves, tabs }.
+   * Cut one closed polygon at `depth`. When `withTabs` is set the tab Z
+   * profile is applied so the bit never descends past tabZ at a tab — the
+   * holding tab then survives every pass, not only the final one. Also
+   * handles helical (ramped) entry. Returns { moves, tabs }.
    */
-  function cutClosed(poly, depth, ctx, isFinal) {
+  function cutClosed(poly, depth, ctx, withTabs) {
     var moves = [];
-    var tabs = (isFinal && ctx.applyTabs) ? placeTabs(poly, ctx) : [];
+    var tabs = (withTabs && ctx.applyTabs) ? placeTabs(poly, ctx) : [];
     var cum = G.cumulative(poly, true), total = cum[cum.length - 1];
     var helical = ctx.plungeStyle === 'helical';
     var rampDist = helical ? Math.min(total * 0.5, Math.max(6, ctx.toolDiameter * 2)) : 0;
@@ -305,10 +318,14 @@
     var allMoves = [], allTabs = [];
     polys.forEach(function (poly) {
       depths.forEach(function (depth, di) {
-        var isFinal = di === depths.length - 1;
-        var r = cutClosed(poly, depth, ctx, isFinal);
+        // Apply the tab profile on EVERY pass. An intermediate pass that ran
+        // the full perimeter at depth would cut straight through the tab
+        // location and destroy the holding tab before the final pass.
+        var r = cutClosed(poly, depth, ctx, true);
         r.moves.forEach(function (m) { allMoves.push(m); });
-        if (isFinal) r.tabs.forEach(function (t) { allTabs.push(t); });
+        if (di === depths.length - 1) {
+          r.tabs.forEach(function (t) { allTabs.push(t); });
+        }
       });
     });
     return {
@@ -551,7 +568,7 @@
       vAngle: bit && bit.v_angle_deg > 0 ? bit.v_angle_deg : 0,
       targetHoleDiameter: s.targetHoleDiameter || 0,
       tabsEnabled: !!s.tabsEnabled,
-      tabCount: s.tabCount || 4,
+      tabCount: s.tabCount != null ? s.tabCount : 4,
       tabWidth: s.tabWidth != null ? s.tabWidth : 6,
       tabPlacement: s.tabPlacement || 'even',
       manualTabs: s.manualTabs || null,
