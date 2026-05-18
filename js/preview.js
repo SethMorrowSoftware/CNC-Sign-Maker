@@ -293,8 +293,12 @@
           e.preventDefault();
           return;
         }
+        // In interactive sign layout mode, left-drag is reserved for item placement.
+        // Use middle-click drag to pan the camera.
+        e.preventDefault();
+        return;
       }
-      if (e.button === 1 || e.button === 0) {
+      if (e.button === 1 || (e.button === 0 && e.altKey)) {
         dragging = true; lastX = e.clientX; lastY = e.clientY;
         canvas.style.cursor = 'grabbing';
         e.preventDefault();
@@ -319,7 +323,11 @@
         lastX = e.clientX; lastY = e.clientY;
         render();
       } else {
-        updateTip(e.clientX - r.left, e.clientY - r.top);
+        var sxh = e.clientX - r.left, syh = e.clientY - r.top;
+        updateTip(sxh, syh);
+        if (scene && scene.interaction && typeof scene.interaction.hitTest === 'function') {
+          canvas.style.cursor = scene.interaction.hitTest({ worldX: toWorldX(sxh), worldY: toWorldY(syh), screenX: sxh, screenY: syh, event: e }) ? 'grab' : '';
+        }
       }
     });
     canvas.addEventListener('mouseleave', function () {

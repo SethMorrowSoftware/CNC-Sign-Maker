@@ -389,33 +389,46 @@
     var signH = Math.max(1, parseFloat(state.settings.signHeight) || 1);
     var bbox = state.job.partBbox;
     if (!bbox) return null;
-    function worldToLocal(wx, wy) {
-      return {
-        x: wx - bbox.minX,
-        y: signH - (wy - bbox.minY)
-      };
-    }
     function localToWorld(lx, ly) {
       return { x: bbox.minX + lx, y: bbox.minY + (signH - ly) };
     }
     var inset = state.settings.frame ? Math.max(0, parseFloat(state.settings.frameInset) || 0) : 0;
     var pad = Math.max(0, parseFloat(state.settings.textPadding) || 0);
     var ix = inset + pad, iy = inset + pad, iW = Math.max(1, signW - 2 * ix), iH = Math.max(1, signH - 2 * iy);
+
+    function collectHandles() {
+      var handles = [];
+      var ta = uiAnchorPoint(state.settings.textAnchor || 'center', ix, iy, iW, iH);
+      var tw = localToWorld(ta.x + (state.settings.textOffsetX || 0), ta.y + (state.settings.textOffsetY || 0));
+      handles.push({ type: 'text', worldX: tw.x, worldY: tw.y, baseX: state.settings.textOffsetX || 0, baseY: state.settings.textOffsetY || 0 });
+      (state.settings.graphics || []).forEach(function (g, idx) {
+        var a = uiAnchorPoint(g.anchor || 'center', ix, iy, iW, iH);
+        var gw = localToWorld(a.x + (g.offsetX || 0), a.y + (g.offsetY || 0));
+        handles.push({ type: 'graphic', idx: idx, worldX: gw.x, worldY: gw.y, baseX: g.offsetX || 0, baseY: g.offsetY || 0 });
+      });
+      return handles;
+    }
+
+    function pickHandle(worldX, worldY) {
+      var best = null, bestD = Infinity;
+      collectHandles().forEach(function (h) {
+        var d = Math.hypot(h.worldX - worldX, h.worldY - worldY);
+        if (d < bestD) { bestD = d; best = h; }
+      });
+      if (!best) return null;
+      var radius = Math.max(10, Math.min(signW, signH) * 0.12);
+      return bestD <= radius ? best : null;
+    }
+
     return {
+      hitTest: function (p) {
+        return !!pickHandle(p.worldX, p.worldY);
+      },
       onPointerDown: function (p) {
-        var local = worldToLocal(p.worldX, p.worldY);
-        var best = null, bestD = Infinity;
-        var ta = uiAnchorPoint(state.settings.textAnchor || 'center', ix, iy, iW, iH);
-        var tw = localToWorld(ta.x + (state.settings.textOffsetX || 0), ta.y + (state.settings.textOffsetY || 0));
-        bestD = Math.hypot(tw.x - p.worldX, tw.y - p.worldY);
-        if (bestD < 8) best = { type: 'text', startX: p.worldX, startY: p.worldY, baseX: state.settings.textOffsetX || 0, baseY: state.settings.textOffsetY || 0 };
-        (state.settings.graphics || []).forEach(function (g, idx) {
-          var a = uiAnchorPoint(g.anchor || 'center', ix, iy, iW, iH);
-          var gw = localToWorld(a.x + (g.offsetX || 0), a.y + (g.offsetY || 0));
-          var d = Math.hypot(gw.x - p.worldX, gw.y - p.worldY);
-          if (d < bestD && d < 8) { bestD = d; best = { type: 'graphic', idx: idx, startX: p.worldX, startY: p.worldY, baseX: g.offsetX || 0, baseY: g.offsetY || 0 }; }
-        });
+        var best = pickHandle(p.worldX, p.worldY);
         if (!best) return null;
+        best.startX = p.worldX;
+        best.startY = p.worldY;
         return {
           capture: true,
           onMove: function (m) {
@@ -437,6 +450,7 @@
       }
     };
   }
+
 
   function reparseAndRecompute() {
     if (!state.svgText) { recompute(); return; }
@@ -1270,6 +1284,24 @@
     recompute();
   }
 
+
+  function fallbackCopyText(text) {
+    var ta = el('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'true');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      var ok = document.execCommand('copy');
+      toast(ok ? 'gcode copied to clipboard.' : 'Copy failed. Select and copy manually.', ok ? undefined : 'warn');
+    } catch (e) {
+      toast('Copy failed. Select and copy manually.', 'warn');
+    }
+    document.body.removeChild(ta);
+  }
+
   function wireUI() {
     /* settings forms */
     forms.operation = buildForm($('#form-operation'), SCHEMA.operation,
@@ -1431,11 +1463,15 @@
       toast('Downloaded ' + gcodeFilename(air));
     });
     $('#copy-gcode').addEventListener('click', function () {
-      if (navigator.clipboard) {
+      if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(lastGcode).then(function () {
           toast('gcode copied to clipboard.');
+        }).catch(function () {
+          fallbackCopyText(lastGcode);
         });
+        return;
       }
+      fallbackCopyText(lastGcode);
     });
     $('#save-server').addEventListener('click', function () {
       if (!state.serverUp) { toast('Backend offline.', 'warn'); return; }
