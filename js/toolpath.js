@@ -47,6 +47,20 @@
       b.minX = Math.min(b.minX, bb.minX); b.minY = Math.min(b.minY, bb.minY);
       b.maxX = Math.max(b.maxX, bb.maxX); b.maxY = Math.max(b.maxY, bb.maxY);
     });
+    // In text-sign mode, lock job bounds to the declared sign dimensions so
+    // resizing or repositioning text/shapes never changes the sign envelope.
+    if (geometry && geometry.isText &&
+        isFinite(geometry.signWidthMm) && isFinite(geometry.signHeightMm)) {
+      var signPts = [
+        place([0, 0]),
+        place([geometry.signWidthMm, 0]),
+        place([geometry.signWidthMm, geometry.signHeightMm]),
+        place([0, geometry.signHeightMm])
+      ];
+      var sb = G.bbox(signPts);
+      b.minX = Math.min(b.minX, sb.minX); b.minY = Math.min(b.minY, sb.minY);
+      b.maxX = Math.max(b.maxX, sb.maxX); b.maxY = Math.max(b.maxY, sb.maxY);
+    }
 
     var margin = s.stockMargin != null ? s.stockMargin : 10;
     var tx, ty;

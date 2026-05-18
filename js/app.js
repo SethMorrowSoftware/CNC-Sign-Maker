@@ -28,8 +28,9 @@
     textContent: 'SIGN', fontKey: 'montserrat',
     signWidth: 300, signHeight: 150,
     fitToSign: true, letterHeight: 60,
-    textAlign: 'center', lineSpacing: 1.1, letterSpacing: 0,
-    frame: false, frameInset: 8, textPadding: 12,
+    textAlign: 'center', textAnchor: 'center', textOffsetX: 0, textOffsetY: 0,
+    lineSpacing: 1.1, letterSpacing: 0,
+    frame: false, frameInset: 8, frameStyle: 'square', frameCornerRadius: 12, textPadding: 12,
     graphics: []
   };
 
@@ -170,6 +171,13 @@
     { key: 'textAlign', label: 'Alignment', type: 'select', options: opts([
       { value: 'left', label: 'Left' }, { value: 'center', label: 'Center' },
       { value: 'right', label: 'Right' }]) },
+    { key: 'textAnchor', label: 'Text placement', type: 'select', options: opts([
+      { value: 'center', label: 'Center' }, { value: 'top-center', label: 'Top center' },
+      { value: 'bottom-center', label: 'Bottom center' }, { value: 'top-left', label: 'Top left' },
+      { value: 'top-right', label: 'Top right' }, { value: 'bottom-left', label: 'Bottom left' },
+      { value: 'bottom-right', label: 'Bottom right' }]) },
+    { key: 'textOffsetX', label: 'Text offset X', type: 'number', step: 1, unit: 'mm' },
+    { key: 'textOffsetY', label: 'Text offset Y', type: 'number', step: 1, unit: 'mm' },
     { key: 'lineSpacing', label: 'Line spacing', type: 'number', step: 0.05, min: 0.5,
       unit: '×', hint: 'Gap between lines, as a multiple.' },
     { key: 'letterSpacing', label: 'Letter spacing', type: 'number', step: 1, unit: '%',
@@ -178,6 +186,13 @@
     { key: 'frameInset', label: 'Frame inset', type: 'number', step: 1, min: 0, unit: 'mm',
       hint: 'Distance of the frame from the sign edge.',
       dependsOn: { key: 'frame', value: true } },
+    { key: 'frameStyle', label: 'Frame style', type: 'select', options: opts([
+      { value: 'square', label: 'Square corners' },
+      { value: 'rounded', label: 'Rounded corners' }]),
+      dependsOn: { key: 'frame', value: true } },
+    { key: 'frameCornerRadius', label: 'Frame corner radius', type: 'number', step: 1, min: 0,
+      unit: 'mm', hint: 'Used only for rounded frame style.',
+      dependsOn: { key: 'frameStyle', value: 'rounded' } },
     { key: 'textPadding', label: 'Text padding', type: 'number', step: 1, min: 0, unit: 'mm',
       hint: 'Gap between the text and the sign or frame edge.' }
   ];
@@ -305,6 +320,9 @@
     schema.forEach(function (field) {
       if (field.dependsOn) {
         var on = settings[field.dependsOn.key] === field.dependsOn.value;
+        if (field.key === 'frameCornerRadius') {
+          on = on && !!settings.frame;
+        }
         map[field.key].style.display = on ? '' : 'none';
       }
     });
@@ -343,12 +361,81 @@
     }
     preview.draw({
       job: state.job, toolpath: state.toolpath,
-      machineX: s.machineX, machineY: s.machineY
+      machineX: s.machineX, machineY: s.machineY,
+      interaction: buildTextDragInteraction()
     });
     renderValidation();
     renderLiveValues();
     $('#generate-btn').disabled = !state.toolpath.ops.length || state.validation.hasError;
     autosave();
+  }
+
+  function uiAnchorPoint(anchor, ix, iy, iW, iH) {
+    switch (anchor) {
+      case 'top-left': return { x: ix, y: iy };
+      case 'top-center': return { x: ix + iW / 2, y: iy };
+      case 'top-right': return { x: ix + iW, y: iy };
+      case 'mid-left': return { x: ix, y: iy + iH / 2 };
+      case 'mid-right': return { x: ix + iW, y: iy + iH / 2 };
+      case 'bottom-left': return { x: ix, y: iy + iH };
+      case 'bottom-center': return { x: ix + iW / 2, y: iy + iH };
+      case 'bottom-right': return { x: ix + iW, y: iy + iH };
+      default: return { x: ix + iW / 2, y: iy + iH / 2 };
+    }
+  }
+  function buildTextDragInteraction() {
+    if (!state.job || state.settings.inputMode !== 'text' || (state.settings.rotation || 0) !== 0) return null;
+    var signW = Math.max(1, parseFloat(state.settings.signWidth) || 1);
+    var signH = Math.max(1, parseFloat(state.settings.signHeight) || 1);
+    var bbox = state.job.partBbox;
+    if (!bbox) return null;
+    function worldToLocal(wx, wy) {
+      return {
+        x: wx - bbox.minX,
+        y: signH - (wy - bbox.minY)
+      };
+    }
+    function localToWorld(lx, ly) {
+      return { x: bbox.minX + lx, y: bbox.minY + (signH - ly) };
+    }
+    var inset = state.settings.frame ? Math.max(0, parseFloat(state.settings.frameInset) || 0) : 0;
+    var pad = Math.max(0, parseFloat(state.settings.textPadding) || 0);
+    var ix = inset + pad, iy = inset + pad, iW = Math.max(1, signW - 2 * ix), iH = Math.max(1, signH - 2 * iy);
+    return {
+      onPointerDown: function (p) {
+        var local = worldToLocal(p.worldX, p.worldY);
+        var best = null, bestD = Infinity;
+        var ta = uiAnchorPoint(state.settings.textAnchor || 'center', ix, iy, iW, iH);
+        var tw = localToWorld(ta.x + (state.settings.textOffsetX || 0), ta.y + (state.settings.textOffsetY || 0));
+        bestD = Math.hypot(tw.x - p.worldX, tw.y - p.worldY);
+        if (bestD < 8) best = { type: 'text', startX: p.worldX, startY: p.worldY, baseX: state.settings.textOffsetX || 0, baseY: state.settings.textOffsetY || 0 };
+        (state.settings.graphics || []).forEach(function (g, idx) {
+          var a = uiAnchorPoint(g.anchor || 'center', ix, iy, iW, iH);
+          var gw = localToWorld(a.x + (g.offsetX || 0), a.y + (g.offsetY || 0));
+          var d = Math.hypot(gw.x - p.worldX, gw.y - p.worldY);
+          if (d < bestD && d < 8) { bestD = d; best = { type: 'graphic', idx: idx, startX: p.worldX, startY: p.worldY, baseX: g.offsetX || 0, baseY: g.offsetY || 0 }; }
+        });
+        if (!best) return null;
+        return {
+          capture: true,
+          onMove: function (m) {
+            var dx = m.worldX - best.startX;
+            var dy = m.worldY - best.startY;
+            if (best.type === 'text') {
+              state.settings.textOffsetX = best.baseX + dx;
+              state.settings.textOffsetY = best.baseY - dy;
+            } else {
+              var g = state.settings.graphics[best.idx];
+              if (!g) return;
+              g.offsetX = best.baseX + dx;
+              g.offsetY = best.baseY - dy;
+            }
+            syncAllForms();
+            rebuildTextNow();
+          }
+        };
+      }
+    };
   }
 
   function reparseAndRecompute() {
@@ -389,10 +476,15 @@
         letterHeightMm: state.settings.letterHeight,
         fitToSign: state.settings.fitToSign,
         align: state.settings.textAlign,
+        textAnchor: state.settings.textAnchor,
+        textOffsetX: state.settings.textOffsetX,
+        textOffsetY: state.settings.textOffsetY,
         lineSpacing: state.settings.lineSpacing,
         letterSpacingPct: state.settings.letterSpacing,
         border: state.settings.frame,
         borderInsetMm: state.settings.frameInset,
+        borderStyle: state.settings.frameStyle,
+        borderRadiusMm: state.settings.frameCornerRadius,
         paddingMm: state.settings.textPadding,
         graphics: state.settings.graphics,
         tessellationTolerance: state.settings.tessellationTolerance
@@ -604,11 +696,11 @@
     });
   }
 
-  function signInterior() {
+  function signInterior(forBorderShape) {
     var signW = Math.max(1, parseFloat(state.settings.signWidth) || 1);
     var signH = Math.max(1, parseFloat(state.settings.signHeight) || 1);
     var inset = state.settings.frame ? Math.max(0, parseFloat(state.settings.frameInset) || 0) : 0;
-    var pad = Math.max(0, parseFloat(state.settings.textPadding) || 0);
+    var pad = forBorderShape ? 0 : Math.max(0, parseFloat(state.settings.textPadding) || 0);
     var ix = inset + pad;
     var iy = inset + pad;
     return {
@@ -617,9 +709,10 @@
     };
   }
 
-  function autoFitGraphic(g, keepRatio) {
+  function autoFitGraphic(g, keepRatio, silent) {
     if (!g) return;
-    var i = signInterior();
+    var isBorderShape = g.shape === 'borderRect' || g.shape === 'ring' || g.shape === 'roundedBorderRect';
+    var i = signInterior(isBorderShape);
     var targetW = i.width;
     var targetH = i.height;
     if (keepRatio) {
@@ -636,7 +729,38 @@
     g.offsetY = 0;
     rebuildTextNow();
     renderGraphicsList();
-    toast('Shape auto-fit to usable sign area.', 'ok');
+    if (!silent) toast((isBorderShape ? 'Border' : 'Shape') + ' auto-fit to usable sign area.', 'ok');
+  }
+
+  function autoFitAllGraphics(keepRatio) {
+    var list = state.settings.graphics || [];
+    if (!list.length) return;
+    list.forEach(function (g) { autoFitGraphic(g, keepRatio, true); });
+    renderGraphicsList();
+    rebuildTextNow();
+    toast('Auto-fit applied to ' + list.length + ' shape' + (list.length === 1 ? '' : 's') + '.', 'ok');
+  }
+
+  function applyTextShapeLayout(preset) {
+    if (!state.settings.graphics || !state.settings.graphics.length) {
+      toast('Add at least one shape first, then apply a layout preset.', 'warn');
+      return;
+    }
+    if (preset !== 'text-top-shape-bottom') return;
+    state.settings.textAnchor = 'top-center';
+    state.settings.textOffsetX = 0;
+    state.settings.textOffsetY = 6;
+    state.settings.fitToSign = true;
+    state.settings.graphics.forEach(function (g) {
+      g.anchor = 'bottom-center';
+      g.offsetX = 0;
+      g.offsetY = -6;
+    });
+    autoFitAllGraphics(true);
+    syncAllForms();
+    renderGraphicsList();
+    rebuildTextNow();
+    toast('Applied layout: text top, shape(s) bottom.', 'ok');
   }
 
   function addGraphicFromBuilder(shapeOverride) {
@@ -1118,7 +1242,8 @@
 
   /* ---- wiring --------------------------------------------------------- */
   var TEXT_KEYS = { signWidth: 1, signHeight: 1, fitToSign: 1, letterHeight: 1,
-    textAlign: 1, lineSpacing: 1, letterSpacing: 1, frame: 1, frameInset: 1,
+    textAlign: 1, textAnchor: 1, textOffsetX: 1, textOffsetY: 1,
+    lineSpacing: 1, letterSpacing: 1, frame: 1, frameInset: 1, frameStyle: 1, frameCornerRadius: 1,
     textPadding: 1, graphics: 1 };
 
   function onSettingChange(key, value, field) {
@@ -1205,7 +1330,13 @@
     });
     initShapeBuilder();
     $('#add-graphic-btn').addEventListener('click', function(){ addGraphicFromBuilder(''); });
-    $('#add-border-btn').addEventListener('click', function(){ addGraphicFromBuilder('borderRect'); });
+    $('#add-border-btn').addEventListener('click', function(){
+      addGraphicFromBuilder(state.settings.frameStyle === 'rounded' ? 'roundedBorderRect' : 'borderRect');
+    });
+    $('#fit-all-graphics-btn').addEventListener('click', function(){ autoFitAllGraphics(false); });
+    $('#graphics-help').insertAdjacentHTML('afterend',
+      '<div class="btn-row"><button class="btn btn-ghost" id="layout-top-bottom-btn" type="button" title="Place text at top and shapes at bottom">Layout: text top + shape bottom</button></div>');
+    $('#layout-top-bottom-btn').addEventListener('click', function(){ applyTextShapeLayout('text-top-shape-bottom'); });
     $('#clear-graphics-btn').addEventListener('click', function () {
       if (!state.settings.graphics.length) return;
       state.settings.graphics = [];
