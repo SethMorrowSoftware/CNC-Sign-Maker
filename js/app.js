@@ -451,14 +451,20 @@
 
   function renderGraphicsList() {
     var box = $('#graphics-list');
+    var clearBtn = $('#clear-graphics-btn');
     if (!box) return;
     var list = state.settings.graphics || [];
+    if (clearBtn) clearBtn.disabled = !list.length;
     if (!list.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
     box.classList.remove('hidden');
     box.innerHTML = '';
+    box.appendChild(el('div', 'graphics-header', list.length + ' shape' + (list.length === 1 ? '' : 's') + ' in sign'));
     list.forEach(function (g, idx) {
-      var row = el('div', 'svg-info-dims', (idx + 1) + '. ' + g.shape + ' · ' + round1(g.width) + '×' + round1(g.height) + 'mm @ ' + g.anchor);
-      var del = el('button', 'link-btn', 'remove');
+      var row = el('div', 'graphics-row');
+      row.appendChild(el('div', 'svg-info-dims', (idx + 1) + '. ' + g.shape + ' · ' + round1(g.width) + '×' + round1(g.height) + 'mm @ ' + g.anchor));
+      var del = el('button', 'link-btn graphics-remove', 'Remove');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Remove shape ' + (idx + 1));
       del.addEventListener('click', function () {
         state.settings.graphics.splice(idx, 1);
         renderGraphicsList();
@@ -1037,6 +1043,7 @@
     });
     $('#add-graphic-btn').addEventListener('click', addGraphicPrompt);
     $('#clear-graphics-btn').addEventListener('click', function () {
+      if (!state.settings.graphics.length) return;
       state.settings.graphics = [];
       renderGraphicsList();
       rebuildTextNow();
