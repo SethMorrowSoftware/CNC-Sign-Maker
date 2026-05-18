@@ -60,6 +60,67 @@
         ];
       }
     },
+
+    ellipse: {
+      label: 'Ellipse',
+      params: [],
+      path: function () { return ['M0.5,0A0.5,0.5 0 1 1 0.5,1A0.5,0.5 0 1 1 0.5,0Z']; }
+    },
+    ellipseBorder: {
+      label: 'Ellipse border',
+      params: [{ key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.45, def: 0.12, step: 0.01, unit: 'ratio' }],
+      path: function (params) {
+        var t = clamp(params.thickness == null ? 0.12 : params.thickness, 0.03, 0.45);
+        var r = 0.5 - t;
+        return ['M0.5,0A0.5,0.5 0 1 1 0.5,1A0.5,0.5 0 1 1 0.5,0Z',
+          'M0.5,' + t + 'A' + r + ',' + r + ' 0 1 0 0.5,' + (1 - t) + 'A' + r + ',' + r + ' 0 1 0 0.5,' + t + 'Z'];
+      }
+    },
+    hexagon: {
+      label: 'Hexagon',
+      params: [{ key: 'inset', label: 'Corner inset', min: 0.1, max: 0.45, def: 0.25, step: 0.01, unit: 'ratio' }],
+      path: function (params) {
+        var inset = clamp(params.inset == null ? 0.25 : params.inset, 0.1, 0.45);
+        return [polygonPath([[inset, 0], [1 - inset, 0], [1, 0.5], [1 - inset, 1], [inset, 1], [0, 0.5]])];
+      }
+    },
+    hexagonBorder: {
+      label: 'Hexagon border',
+      params: [
+        { key: 'inset', label: 'Corner inset', min: 0.1, max: 0.45, def: 0.25, step: 0.01, unit: 'ratio' },
+        { key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.24, def: 0.1, step: 0.01, unit: 'ratio' }
+      ],
+      path: function (params) {
+        var inset = clamp(params.inset == null ? 0.25 : params.inset, 0.1, 0.45);
+        var t = clamp(params.thickness == null ? 0.1 : params.thickness, 0.03, 0.24);
+        var innerInset = clamp(inset + t, 0.12, 0.49);
+        var yTop = t;
+        var yBot = 1 - t;
+        var rightX = 1 - t;
+        var leftX = t;
+        return [
+          polygonPath([[inset, 0], [1 - inset, 0], [1, 0.5], [1 - inset, 1], [inset, 1], [0, 0.5]]),
+          polygonPath([[innerInset, yTop], [1 - innerInset, yTop], [rightX, 0.5], [1 - innerInset, yBot], [innerInset, yBot], [leftX, 0.5]])
+        ];
+      }
+    },
+    pillBorder: {
+      label: 'Pill border',
+      params: [{ key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.24, def: 0.1, step: 0.01, unit: 'ratio' }],
+      path: function (params) {
+        var t = clamp(params.thickness == null ? 0.1 : params.thickness, 0.03, 0.24);
+        var rOuter = 0.5;
+        var rInner = clamp(rOuter - t, 0.08, 0.47);
+        var xLeft = 0;
+        var xRight = 1;
+        var xLeftInner = t;
+        var xRightInner = 1 - t;
+        return [
+          'M0.5,0L0.5,0A' + rOuter + ',' + rOuter + ' 0 0 1 ' + xRight + ',0.5A' + rOuter + ',' + rOuter + ' 0 0 1 0.5,1A' + rOuter + ',' + rOuter + ' 0 0 1 ' + xLeft + ',0.5A' + rOuter + ',' + rOuter + ' 0 0 1 0.5,0Z',
+          'M0.5,' + t + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + xLeftInner + ',0.5A' + rInner + ',' + rInner + ' 0 0 0 0.5,' + (1 - t) + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + xRightInner + ',0.5A' + rInner + ',' + rInner + ' 0 0 0 0.5,' + t + 'Z'
+        ];
+      }
+    },
     circle: {
       label: 'Circle',
       params: [],
@@ -76,7 +137,7 @@
       }
     },
     arrow: {
-      label: 'Arrow',
+      label: 'Arrow right',
       params: [{ key: 'headRatio', label: 'Head length', min: 0.15, max: 0.8, def: 0.35, step: 0.01, unit: 'ratio' }, { key: 'shaftRatio', label: 'Shaft width', min: 0.1, max: 0.9, def: 0.35, step: 0.01, unit: 'ratio' }],
       path: function (params) {
         var hr = clamp(params.headRatio == null ? 0.35 : params.headRatio, 0.15, 0.8);
@@ -84,6 +145,17 @@
         var y0 = (1 - sr) / 2;
         var y1 = y0 + sr;
         return [polygonPath([[0, y0], [1 - hr, y0], [1 - hr, 0], [1, 0.5], [1 - hr, 1], [1 - hr, y1], [0, y1]])];
+      }
+    },
+    arrowLeft: {
+      label: 'Arrow left',
+      params: [{ key: 'headRatio', label: 'Head length', min: 0.15, max: 0.8, def: 0.35, step: 0.01, unit: 'ratio' }, { key: 'shaftRatio', label: 'Shaft width', min: 0.1, max: 0.9, def: 0.35, step: 0.01, unit: 'ratio' }],
+      path: function (params) {
+        var hr = clamp(params.headRatio == null ? 0.35 : params.headRatio, 0.15, 0.8);
+        var sr = clamp(params.shaftRatio == null ? 0.35 : params.shaftRatio, 0.1, 0.9);
+        var y0 = (1 - sr) / 2;
+        var y1 = y0 + sr;
+        return [polygonPath([[1, y0], [hr, y0], [hr, 0], [0, 0.5], [hr, 1], [hr, y1], [1, y1]])];
       }
     },
     diamond: { label: 'Diamond', params: [], path: function () { return [polygonPath([[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]])]; } },
