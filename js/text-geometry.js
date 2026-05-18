@@ -103,8 +103,10 @@
       case 'top-left': return { x: ix, y: iy };
       case 'top-center': return { x: ix + iW / 2, y: iy };
       case 'top-right': return { x: ix + iW, y: iy };
-      case 'mid-left': return { x: ix, y: iy + iH / 2 };
-      case 'mid-right': return { x: ix + iW, y: iy + iH / 2 };
+      case 'mid-left':
+      case 'center-left': return { x: ix, y: iy + iH / 2 };
+      case 'mid-right':
+      case 'center-right': return { x: ix + iW, y: iy + iH / 2 };
       case 'bottom-left': return { x: ix, y: iy + iH };
       case 'bottom-center': return { x: ix + iW / 2, y: iy + iH };
       case 'bottom-right': return { x: ix + iW, y: iy + iH };
