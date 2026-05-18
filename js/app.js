@@ -404,11 +404,23 @@
       var handles = [];
       var ta = uiAnchorPoint(state.settings.textAnchor || 'center', ix, iy, iW, iH);
       var tw = localToWorld(ta.x + (state.settings.textOffsetX || 0), ta.y + (state.settings.textOffsetY || 0));
-      handles.push({ type: 'text', worldX: tw.x, worldY: tw.y, baseX: state.settings.textOffsetX || 0, baseY: state.settings.textOffsetY || 0 });
+      handles.push({
+        type: 'text',
+        worldX: tw.x, worldY: tw.y,
+        baseX: state.settings.textOffsetX || 0, baseY: state.settings.textOffsetY || 0,
+        minOffsetX: ix - ta.x, maxOffsetX: (ix + iW) - ta.x,
+        minOffsetY: iy - ta.y, maxOffsetY: (iy + iH) - ta.y
+      });
       (state.settings.graphics || []).forEach(function (g, idx) {
         var a = uiAnchorPoint(g.anchor || 'center', ix, iy, iW, iH);
         var gw = localToWorld(a.x + (g.offsetX || 0), a.y + (g.offsetY || 0));
-        handles.push({ type: 'graphic', idx: idx, worldX: gw.x, worldY: gw.y, baseX: g.offsetX || 0, baseY: g.offsetY || 0 });
+        handles.push({
+          type: 'graphic', idx: idx,
+          worldX: gw.x, worldY: gw.y,
+          baseX: g.offsetX || 0, baseY: g.offsetY || 0,
+          minOffsetX: ix - a.x, maxOffsetX: (ix + iW) - a.x,
+          minOffsetY: iy - a.y, maxOffsetY: (iy + iH) - a.y
+        });
       });
       return handles;
     }
@@ -438,14 +450,21 @@
           onMove: function (m) {
             var dx = m.worldX - best.startX;
             var dy = m.worldY - best.startY;
+            var rawX = best.baseX + dx;
+            var rawY = best.baseY - dy;
+            var nextX = Math.max(best.minOffsetX, Math.min(best.maxOffsetX, rawX));
+            var nextY = Math.max(best.minOffsetY, Math.min(best.maxOffsetY, rawY));
+            if (nextX !== rawX || nextY !== rawY) {
+              toast('Cannot move outside the usable sign area. Sign size is locked.', 'error');
+            }
             if (best.type === 'text') {
-              state.settings.textOffsetX = best.baseX + dx;
-              state.settings.textOffsetY = best.baseY - dy;
+              state.settings.textOffsetX = nextX;
+              state.settings.textOffsetY = nextY;
             } else {
               var g = state.settings.graphics[best.idx];
               if (!g) return;
-              g.offsetX = best.baseX + dx;
-              g.offsetY = best.baseY - dy;
+              g.offsetX = nextX;
+              g.offsetY = nextY;
             }
             syncAllForms();
             rebuildTextNow();
