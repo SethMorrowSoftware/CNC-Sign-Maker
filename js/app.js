@@ -1270,6 +1270,24 @@
     recompute();
   }
 
+
+  function fallbackCopyText(text) {
+    var ta = el('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'true');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      var ok = document.execCommand('copy');
+      toast(ok ? 'gcode copied to clipboard.' : 'Copy failed. Select and copy manually.', ok ? undefined : 'warn');
+    } catch (e) {
+      toast('Copy failed. Select and copy manually.', 'warn');
+    }
+    document.body.removeChild(ta);
+  }
+
   function wireUI() {
     /* settings forms */
     forms.operation = buildForm($('#form-operation'), SCHEMA.operation,
@@ -1431,11 +1449,15 @@
       toast('Downloaded ' + gcodeFilename(air));
     });
     $('#copy-gcode').addEventListener('click', function () {
-      if (navigator.clipboard) {
+      if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(lastGcode).then(function () {
           toast('gcode copied to clipboard.');
+        }).catch(function () {
+          fallbackCopyText(lastGcode);
         });
+        return;
       }
+      fallbackCopyText(lastGcode);
     });
     $('#save-server').addEventListener('click', function () {
       if (!state.serverUp) { toast('Backend offline.', 'warn'); return; }
