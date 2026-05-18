@@ -29,7 +29,8 @@
     signWidth: 300, signHeight: 150,
     fitToSign: true, letterHeight: 60,
     textAlign: 'center', lineSpacing: 1.1, letterSpacing: 0,
-    frame: false, frameInset: 8, textPadding: 12
+    frame: false, frameInset: 8, textPadding: 12,
+    graphics: []
   };
 
   var OP_HINTS = {
@@ -393,6 +394,7 @@
         border: state.settings.frame,
         borderInsetMm: state.settings.frameInset,
         paddingMm: state.settings.textPadding,
+        graphics: state.settings.graphics,
         tessellationTolerance: state.settings.tessellationTolerance
       });
     } catch (e) {
@@ -444,6 +446,65 @@
       reparseAndRecompute();
       if (state.geometry) preview.fit();
     }
+  }
+
+
+  function renderGraphicsList() {
+    var box = $('#graphics-list');
+    if (!box) return;
+    var list = state.settings.graphics || [];
+    if (!list.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    box.classList.remove('hidden');
+    box.innerHTML = '';
+    list.forEach(function (g, idx) {
+      var row = el('div', 'svg-info-dims', (idx + 1) + '. ' + g.shape + ' · ' + round1(g.width) + '×' + round1(g.height) + 'mm @ ' + g.anchor);
+      var del = el('button', 'link-btn', 'remove');
+      del.addEventListener('click', function () {
+        state.settings.graphics.splice(idx, 1);
+        renderGraphicsList();
+        rebuildTextNow();
+      });
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+  }
+
+  function addGraphicPrompt() {
+    var names = Object.keys(Forge.shapes.SHAPES);
+    var shape = window.prompt('Shape key (' + names.join(', ') + '):', 'arrow');
+    if (!shape) return;
+    if (!Forge.shapes.SHAPES[shape]) { toast('Unknown shape: ' + shape, 'warn'); return; }
+
+    var width = parseFloat(window.prompt('Shape width (mm):', '40'));
+    var height = parseFloat(window.prompt('Shape height (mm):', '20'));
+    var anchor = window.prompt('Anchor (center, top-left, top-center, top-right, mid-left, mid-right, bottom-left, bottom-center, bottom-right):', 'center');
+    if (!anchor) anchor = 'center';
+
+    var g = {
+      id: 'g:' + Date.now(), shape: shape, anchor: anchor,
+      offsetX: 0, offsetY: 0,
+      width: isFinite(width) && width > 0 ? width : 40,
+      height: isFinite(height) && height > 0 ? height : 20,
+      rotation: 0, flipH: false, flipV: false, params: {}
+    };
+
+    var def = Forge.shapes.SHAPES[shape];
+    if (def && Array.isArray(def.params)) {
+      def.params.forEach(function (param) {
+        var promptVal = window.prompt(
+          shape + ' ' + param.key +
+          ' (' + param.min + ' to ' + param.max + '):',
+          String(param.def)
+        );
+        if (promptVal == null || promptVal === '') return;
+        var num = parseFloat(promptVal);
+        if (isFinite(num)) g.params[param.key] = num;
+      });
+    }
+
+    state.settings.graphics.push(g);
+    renderGraphicsList();
+    rebuildTextNow();
   }
 
   function onFontUpload(file) {
@@ -876,7 +937,7 @@
   /* ---- wiring --------------------------------------------------------- */
   var TEXT_KEYS = { signWidth: 1, signHeight: 1, fitToSign: 1, letterHeight: 1,
     textAlign: 1, lineSpacing: 1, letterSpacing: 1, frame: 1, frameInset: 1,
-    textPadding: 1 };
+    textPadding: 1, graphics: 1 };
 
   function onSettingChange(key, value, field) {
     state.settings[key] = value;
@@ -919,6 +980,7 @@
     refreshVisibility(forms.geometry, SCHEMA.geometry, state.settings);
     refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
     populateFontSelect();
+    renderGraphicsList();
 
     /* settings tab switching */
     $('#settings-tabs').addEventListener('click', function (e) {
@@ -958,6 +1020,12 @@
     });
     $('#font-input').addEventListener('change', function () {
       onFontUpload(this.files[0]);
+    });
+    $('#add-graphic-btn').addEventListener('click', addGraphicPrompt);
+    $('#clear-graphics-btn').addEventListener('click', function () {
+      state.settings.graphics = [];
+      renderGraphicsList();
+      rebuildTextNow();
     });
 
     /* SVG upload */
