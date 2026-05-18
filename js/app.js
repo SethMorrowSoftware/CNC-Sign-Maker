@@ -470,15 +470,29 @@
   }
 
   function addGraphicPrompt() {
+    if (!Forge.shapes || !Forge.shapes.SHAPES) {
+      toast('Shape library is unavailable right now.', 'warn');
+      return;
+    }
     var names = Object.keys(Forge.shapes.SHAPES);
+    if (!names.length) {
+      toast('No shapes are currently registered.', 'warn');
+      return;
+    }
     var shape = window.prompt('Shape key (' + names.join(', ') + '):', 'arrow');
     if (!shape) return;
+    shape = String(shape).trim();
     if (!Forge.shapes.SHAPES[shape]) { toast('Unknown shape: ' + shape, 'warn'); return; }
 
     var width = parseFloat(window.prompt('Shape width (mm):', '40'));
     var height = parseFloat(window.prompt('Shape height (mm):', '20'));
     var anchor = window.prompt('Anchor (center, top-left, top-center, top-right, mid-left, mid-right, bottom-left, bottom-center, bottom-right):', 'center');
-    if (!anchor) anchor = 'center';
+    var validAnchors = {
+      center: 1, 'top-left': 1, 'top-center': 1, 'top-right': 1,
+      'mid-left': 1, 'mid-right': 1, 'bottom-left': 1, 'bottom-center': 1, 'bottom-right': 1
+    };
+    anchor = anchor ? String(anchor).trim() : 'center';
+    if (!validAnchors[anchor]) anchor = 'center';
 
     var g = {
       id: 'g:' + Date.now(), shape: shape, anchor: anchor,
