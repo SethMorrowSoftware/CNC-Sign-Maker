@@ -8,6 +8,8 @@
   'use strict';
 
   var VERSION = '1.0.0';
+  var MAX_SVG_BYTES = 4 * 1024 * 1024;
+  var MAX_FONT_BYTES = 8 * 1024 * 1024;
 
   /* ---- defaults ------------------------------------------------------- */
   var DEFAULTS = {
@@ -18,7 +20,7 @@
     tabsEnabled: true, tabCount: 4, tabThickness: 1.5, tabWidth: 6, tabPlacement: 'even',
     scale: 100, rotation: 0, originPosition: 'bottom-left',
     customOriginX: 0, customOriginY: 0,
-    stockMargin: 10, holeThreshold: 50, targetHoleDiameter: 0,
+    stockMargin: 0, holeThreshold: 50, targetHoleDiameter: 0,
     tessellationTolerance: 0.1,
     machineX: 1270, machineY: 2540, safeZ: 10, preStockZ: 2,
     rapidFeed: 5000, useM0: false, spindleRpm: 18000,
@@ -98,7 +100,7 @@
       { key: 'customOriginY', label: 'Custom origin Y', type: 'number', step: 1, unit: 'mm',
         dependsOn: { key: 'originPosition', value: 'custom' } },
       { key: 'stockMargin', label: 'Stock margin', type: 'number', step: 1, min: 0, unit: 'mm',
-        hint: 'Distance from work zero to the nearest geometry.' },
+        hint: 'Extra stock added on each side of the part (0 keeps stock equal to the sign size).' },
       { key: 'holeThreshold', label: 'Hole-vs-trace threshold', type: 'number', step: 5,
         min: 0, unit: 'mm²', hint: 'Closed subpaths below this area become drill cycles.' },
       { key: 'targetHoleDiameter', label: 'Target hole diameter', type: 'number', step: 0.1,
@@ -908,6 +910,10 @@
 
   function onFontUpload(file) {
     if (!file) return;
+    if (file.size > MAX_FONT_BYTES) {
+      toast('Font file is too large. Maximum allowed size is 8 MB.', 'error');
+      return;
+    }
     var fr = new FileReader();
     fr.onload = function () {
       try {
@@ -918,7 +924,7 @@
         loadFontThen(rebuildTextNow);
         toast('Font "' + added.name + '" added.');
       } catch (e) {
-        toast('Could not read that font file: ' + e.message, 'error');
+        toast('Could not read that font file: ' + e.message + ' Supported formats are .ttf, .otf, and .woff.', 'error');
       }
     };
     fr.onerror = function () { toast('Could not read the font file.', 'error'); };
@@ -969,18 +975,30 @@
   }
 
   /* ---- live values ---------------------------------------------------- */
+  function formatDuration(sec) {
+    if (!isFinite(sec) || sec < 0) return '—';
+    return sec >= 60
+      ? Math.floor(sec / 60) + 'm ' + Math.round(sec % 60) + 's'
+      : Math.round(sec) + 's';
+  }
+
+  function formatDistance(mm) {
+    if (!isFinite(mm) || mm < 0) return '—';
+    return mm >= 1000 ? (mm / 1000).toFixed(2) + ' m' : Math.round(mm) + ' mm';
+  }
+
   function renderLiveValues() {
-    var stock = '—', runtime = '—', passes = '—', chip = '—';
+    var stock = '—', runtime = '—', passes = '—', chip = '—', cutDistance = '—', rapidDistance = '—';
     if (state.job) {
       stock = round1(state.job.stockWidth) + ' × ' +
         round1(state.job.stockHeight) + ' mm';
     }
     if (state.toolpath) {
       var sec = state.toolpath.stats.estSeconds;
-      runtime = sec >= 60
-        ? Math.floor(sec / 60) + 'm ' + Math.round(sec % 60) + 's'
-        : Math.round(sec) + 's';
+      runtime = formatDuration(sec);
       passes = String(state.toolpath.stats.zPasses);
+      cutDistance = formatDistance(state.toolpath.stats.cutLength);
+      rapidDistance = formatDistance(state.toolpath.stats.rapidLength);
     }
     var s = state.settings;
     if (state.bit && state.bit.flute_count > 0 && s.spindleRpm > 0 && s.feedCut > 0) {
@@ -991,6 +1009,8 @@
     $('#lv-runtime').textContent = runtime;
     $('#lv-passes').textContent = passes;
     $('#lv-chip').textContent = chip;
+    $('#lv-cutlen').textContent = cutDistance;
+    $('#lv-rapidlen').textContent = rapidDistance;
   }
   function round1(n) { return Math.round(n * 10) / 10; }
 
@@ -1010,7 +1030,7 @@
         tessellationTolerance: state.settings.tessellationTolerance
       });
     } catch (e) {
-      toast('Could not parse SVG: ' + e.message, 'error');
+      toast('Could not parse SVG: ' + e.message + ' If the file has <text>, convert text to paths first, or use Text sign mode.', 'error');
       return;
     }
     if (name && /\.svg$/i.test(name) && state.settings.jobName === 'job') {
@@ -1050,6 +1070,14 @@
 
   function readFile(file) {
     if (!file) return;
+    if (!/\.svg$/i.test(file.name || '')) {
+      toast('Please upload an .svg file.', 'error');
+      return;
+    }
+    if (file.size > MAX_SVG_BYTES) {
+      toast('SVG file is too large. Maximum allowed size is 4 MB.', 'error');
+      return;
+    }
     var fr = new FileReader();
     fr.onload = function () { loadSvg(String(fr.result), file.name); };
     fr.onerror = function () { toast('Could not read file.', 'error'); };
@@ -1196,8 +1224,10 @@
     lastGcode = buildGcode(air);
     $('#gcode-output').textContent = lastGcode;
     var lines = lastGcode.split('\n').length;
+    var runtime = state.toolpath && state.toolpath.stats ? formatDuration(state.toolpath.stats.estSeconds) : null;
     $('#modal-sub').textContent = lines + ' lines · ' +
       (lastGcode.length / 1024).toFixed(1) + ' KB' +
+      (runtime && runtime !== '—' ? ' · ~' + runtime : '') +
       (air ? ' · AIR PASS (no material cut)' : '');
   }
 

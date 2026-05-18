@@ -68,7 +68,7 @@
       b.maxX = Math.max(b.maxX, sb.maxX); b.maxY = Math.max(b.maxY, sb.maxY);
     }
 
-    var margin = s.stockMargin != null ? s.stockMargin : 10;
+    var margin = s.stockMargin != null ? s.stockMargin : 0;
     // A fully degenerate input (every subpath dropped) leaves b unbounded —
     // collapse it to the origin so stock size and placement stay finite.
     if (!isFinite(b.minX)) {
