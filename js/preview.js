@@ -293,12 +293,9 @@
           e.preventDefault();
           return;
         }
-        // In interactive sign layout mode, left-drag is reserved for item placement.
-        // Use middle-click drag to pan the camera.
-        e.preventDefault();
-        return;
+        // No sign handle was grabbed — fall through so left-drag still pans.
       }
-      if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      if (e.button === 1 || e.button === 0) {
         dragging = true; lastX = e.clientX; lastY = e.clientY;
         canvas.style.cursor = 'grabbing';
         e.preventDefault();
