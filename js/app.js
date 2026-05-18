@@ -375,8 +375,10 @@
       case 'top-left': return { x: ix, y: iy };
       case 'top-center': return { x: ix + iW / 2, y: iy };
       case 'top-right': return { x: ix + iW, y: iy };
-      case 'mid-left': return { x: ix, y: iy + iH / 2 };
-      case 'mid-right': return { x: ix + iW, y: iy + iH / 2 };
+      case 'mid-left':
+      case 'center-left': return { x: ix, y: iy + iH / 2 };
+      case 'mid-right':
+      case 'center-right': return { x: ix + iW, y: iy + iH / 2 };
       case 'bottom-left': return { x: ix, y: iy + iH };
       case 'bottom-center': return { x: ix + iW / 2, y: iy + iH };
       case 'bottom-right': return { x: ix + iW, y: iy + iH };
@@ -597,8 +599,18 @@
     var shapeSel = $('#shape-type');
     var anchorSel = $('#shape-anchor');
     if (!shapeSel || !anchorSel) return;
-    var anchors = ['center','top-left','top-center','top-right','mid-left','mid-right','bottom-left','bottom-center','bottom-right'];
-    anchors.forEach(function (a) { var o = el('option', null, a); o.value = a; anchorSel.appendChild(o); });
+    var anchorOptions = [
+      { value: 'center', label: 'Center' },
+      { value: 'top-left', label: 'Top left' },
+      { value: 'top-center', label: 'Top center' },
+      { value: 'top-right', label: 'Top right' },
+      { value: 'center-left', label: 'Center left' },
+      { value: 'center-right', label: 'Center right' },
+      { value: 'bottom-left', label: 'Bottom left' },
+      { value: 'bottom-center', label: 'Bottom center' },
+      { value: 'bottom-right', label: 'Bottom right' }
+    ];
+    anchorOptions.forEach(function (a) { var o = el('option', null, a.label); o.value = a.value; anchorSel.appendChild(o); });
     Object.keys(Forge.shapes.SHAPES).forEach(function (k) {
       var d = Forge.shapes.SHAPES[k];
       var o = el('option', null, d.label ? (d.label + ' (' + k + ')') : k);
@@ -662,8 +674,18 @@
       var anchorLab = el('label', 'field');
       anchorLab.appendChild(el('span', null, 'Anchor'));
       var anchorSel = el('select');
-      ['center','top-left','top-center','top-right','mid-left','mid-right','bottom-left','bottom-center','bottom-right'].forEach(function (a) {
-        var o = el('option', null, a); o.value = a; anchorSel.appendChild(o);
+      [
+        { value: 'center', label: 'Center' },
+        { value: 'top-left', label: 'Top left' },
+        { value: 'top-center', label: 'Top center' },
+        { value: 'top-right', label: 'Top right' },
+        { value: 'center-left', label: 'Center left' },
+        { value: 'center-right', label: 'Center right' },
+        { value: 'bottom-left', label: 'Bottom left' },
+        { value: 'bottom-center', label: 'Bottom center' },
+        { value: 'bottom-right', label: 'Bottom right' }
+      ].forEach(function (a) {
+        var o = el('option', null, a.label); o.value = a.value; anchorSel.appendChild(o);
       });
       anchorSel.value = g.anchor || 'center';
       anchorSel.addEventListener('change', function () { g.anchor = anchorSel.value; rebuildTextNow(); });
@@ -797,7 +819,7 @@
     var anchor = $('#shape-anchor').value || 'center';
     var validAnchors = {
       center: 1, 'top-left': 1, 'top-center': 1, 'top-right': 1,
-      'mid-left': 1, 'mid-right': 1, 'bottom-left': 1, 'bottom-center': 1, 'bottom-right': 1
+      'mid-left': 1, 'mid-right': 1, 'center-left': 1, 'center-right': 1, 'bottom-left': 1, 'bottom-center': 1, 'bottom-right': 1
     };
     anchor = anchor ? String(anchor).trim() : 'center';
     if (!validAnchors[anchor]) anchor = 'center';
