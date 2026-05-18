@@ -319,7 +319,11 @@
         lastX = e.clientX; lastY = e.clientY;
         render();
       } else {
-        updateTip(e.clientX - r.left, e.clientY - r.top);
+        var sxh = e.clientX - r.left, syh = e.clientY - r.top;
+        updateTip(sxh, syh);
+        if (scene && scene.interaction && typeof scene.interaction.hitTest === 'function') {
+          canvas.style.cursor = scene.interaction.hitTest({ worldX: toWorldX(sxh), worldY: toWorldY(syh), screenX: sxh, screenY: syh, event: e }) ? 'grab' : '';
+        }
       }
     });
     canvas.addEventListener('mouseleave', function () {
