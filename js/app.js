@@ -518,6 +518,28 @@
     box.appendChild(el('div', 'graphics-header', list.length + ' shape' + (list.length === 1 ? '' : 's') + ' in sign'));
     list.forEach(function (g, idx) {
       var row = el('div', 'graphics-row');
+      var rowHead = el('div', 'graphics-row-head');
+      var shapeLabel = (Forge.shapes && Forge.shapes.SHAPES && Forge.shapes.SHAPES[g.shape] && Forge.shapes.SHAPES[g.shape].label)
+        ? Forge.shapes.SHAPES[g.shape].label
+        : g.shape;
+      rowHead.appendChild(el('div', 'graphics-row-title', (idx + 1) + '. ' + shapeLabel));
+      var rowActions = el('div', 'graphics-row-actions');
+      var fitBtn = el('button', 'btn btn-ghost btn-mini', 'Auto-fit');
+      fitBtn.type = 'button';
+      fitBtn.title = 'Fit this shape to the usable sign area.';
+      fitBtn.addEventListener('click', function () {
+        autoFitGraphic(g, false);
+      });
+      rowActions.appendChild(fitBtn);
+      var fitAspectBtn = el('button', 'btn btn-ghost btn-mini', 'Fit (keep ratio)');
+      fitAspectBtn.type = 'button';
+      fitAspectBtn.title = 'Fit this shape while keeping aspect ratio.';
+      fitAspectBtn.addEventListener('click', function () {
+        autoFitGraphic(g, true);
+      });
+      rowActions.appendChild(fitAspectBtn);
+      rowHead.appendChild(rowActions);
+      row.appendChild(rowHead);
       var fields = el('div', 'graphics-row-fields');
       function addNum(label, key, step) {
         var lab = el('label', 'field'); lab.appendChild(el('span', null, label));
@@ -525,10 +547,49 @@
         inp.addEventListener('input', function(){ var v=parseFloat(inp.value); if(isFinite(v)){ g[key]=v; rebuildText(); renderGraphicsList(); }});
         lab.appendChild(inp); fields.appendChild(lab);
       }
-      addNum((idx + 1) + '. W (mm)', 'width', 1);
+      addNum('W (mm)', 'width', 1);
       addNum('H (mm)', 'height', 1);
       addNum('X offset (mm)', 'offsetX', 0.5);
       addNum('Y offset (mm)', 'offsetY', 0.5);
+      addNum('Rotation (°)', 'rotation', 1);
+
+      var anchorLab = el('label', 'field');
+      anchorLab.appendChild(el('span', null, 'Anchor'));
+      var anchorSel = el('select');
+      ['center','top-left','top-center','top-right','mid-left','mid-right','bottom-left','bottom-center','bottom-right'].forEach(function (a) {
+        var o = el('option', null, a); o.value = a; anchorSel.appendChild(o);
+      });
+      anchorSel.value = g.anchor || 'center';
+      anchorSel.addEventListener('change', function () { g.anchor = anchorSel.value; rebuildTextNow(); });
+      anchorLab.appendChild(anchorSel);
+      fields.appendChild(anchorLab);
+
+      var def = Forge.shapes && Forge.shapes.SHAPES ? Forge.shapes.SHAPES[g.shape] : null;
+      if (!g.params) g.params = {};
+      if (def && Array.isArray(def.params)) {
+        def.params.forEach(function (param) {
+          var lab = el('label', 'field');
+          var pname = (param.label || param.key) + (param.unit === 'ratio' ? ' (%)' : '');
+          lab.appendChild(el('span', null, pname));
+          var inp = el('input');
+          inp.type = 'number';
+          inp.step = param.step != null ? param.step : 0.01;
+          if (param.min != null) inp.min = param.unit === 'ratio' ? param.min * 100 : param.min;
+          if (param.max != null) inp.max = param.unit === 'ratio' ? param.max * 100 : param.max;
+          var current = g.params[param.key];
+          if (!isFinite(current)) current = param.def;
+          inp.value = param.unit === 'ratio' ? current * 100 : current;
+          inp.addEventListener('input', function () {
+            var num = parseFloat(inp.value);
+            if (!isFinite(num)) return;
+            if (param.unit === 'ratio') num = num / 100;
+            g.params[param.key] = num;
+            rebuildTextNow();
+          });
+          lab.appendChild(inp);
+          fields.appendChild(lab);
+        });
+      }
       row.appendChild(fields);
       var del = el('button', 'link-btn graphics-remove', 'Remove');
       del.type = 'button';
@@ -541,6 +602,41 @@
       row.appendChild(del);
       box.appendChild(row);
     });
+  }
+
+  function signInterior() {
+    var signW = Math.max(1, parseFloat(state.settings.signWidth) || 1);
+    var signH = Math.max(1, parseFloat(state.settings.signHeight) || 1);
+    var inset = state.settings.frame ? Math.max(0, parseFloat(state.settings.frameInset) || 0) : 0;
+    var pad = Math.max(0, parseFloat(state.settings.textPadding) || 0);
+    var ix = inset + pad;
+    var iy = inset + pad;
+    return {
+      width: Math.max(1, signW - 2 * ix),
+      height: Math.max(1, signH - 2 * iy)
+    };
+  }
+
+  function autoFitGraphic(g, keepRatio) {
+    if (!g) return;
+    var i = signInterior();
+    var targetW = i.width;
+    var targetH = i.height;
+    if (keepRatio) {
+      var cw = Math.max(0.1, parseFloat(g.width) || 1);
+      var ch = Math.max(0.1, parseFloat(g.height) || 1);
+      var s = Math.min(targetW / cw, targetH / ch);
+      targetW = cw * s;
+      targetH = ch * s;
+    }
+    g.width = Math.max(0.1, targetW);
+    g.height = Math.max(0.1, targetH);
+    g.anchor = 'center';
+    g.offsetX = 0;
+    g.offsetY = 0;
+    rebuildTextNow();
+    renderGraphicsList();
+    toast('Shape auto-fit to usable sign area.', 'ok');
   }
 
   function addGraphicFromBuilder(shapeOverride) {
