@@ -403,10 +403,20 @@
           expand(nx, ny);
         } else if (m.t === 'arc') {
           var r = Math.hypot(m.i, m.j);
-          cut += 2 * Math.PI * r;
-          // bound the circle around its centre (start point + I/J offset),
-          // not the arc endpoint
           var acx = cx + m.i, acy = cy + m.j;
+          var sa = Math.atan2(cy - acy, cx - acx);
+          var ea = Math.atan2(ny - acy, nx - acx);
+          var sweep;
+          if (m.ccw) {
+            sweep = ea - sa;
+            if (sweep < 0) sweep += Math.PI * 2;
+          } else {
+            sweep = sa - ea;
+            if (sweep < 0) sweep += Math.PI * 2;
+          }
+          if (Math.abs(nx - cx) < 1e-6 && Math.abs(ny - cy) < 1e-6) sweep = Math.PI * 2;
+          cut += r * sweep;
+          // conservative bounds: full circle around the centre
           expand(acx - r, acy - r); expand(acx + r, acy + r);
         }
         cx = nx; cy = ny;

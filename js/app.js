@@ -434,7 +434,7 @@
         if (d < bestD) { bestD = d; best = h; }
       });
       if (!best) return null;
-      var radius = Math.max(10, Math.min(signW, signH) * 0.12);
+      var radius = Math.max(6, Math.min(24, Math.min(signW, signH) * 0.08));
       return bestD <= radius ? best : null;
     }
 
