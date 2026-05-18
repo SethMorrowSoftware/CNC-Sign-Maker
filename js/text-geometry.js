@@ -97,6 +97,38 @@
 
   function round(v) { return Math.round(v * 1000) / 1000; }
 
+  function anchorPoint(anchor, ix, iy, iW, iH) {
+    switch (anchor) {
+      case 'top-left': return { x: ix, y: iy };
+      case 'top-center': return { x: ix + iW / 2, y: iy };
+      case 'top-right': return { x: ix + iW, y: iy };
+      case 'mid-left': return { x: ix, y: iy + iH / 2 };
+      case 'mid-right': return { x: ix + iW, y: iy + iH / 2 };
+      case 'bottom-left': return { x: ix, y: iy + iH };
+      case 'bottom-center': return { x: ix + iW / 2, y: iy + iH };
+      case 'bottom-right': return { x: ix + iW, y: iy + iH };
+      default: return { x: ix + iW / 2, y: iy + iH / 2 };
+    }
+  }
+
+  function graphicGroup(g, ix, iy, iW, iH) {
+    if (!Forge.shapes || !Forge.shapes.SHAPES) return '';
+    var def = Forge.shapes.SHAPES[g.shape];
+    if (!def || typeof def.path !== 'function') return '';
+    var paths = def.path(g.params || {});
+    if (!paths || !paths.length) return '';
+    var w = Math.max(0.1, g.width || 30);
+    var h = Math.max(0.1, g.height || 30);
+    var a = anchorPoint(g.anchor, ix, iy, iW, iH);
+    var x = a.x + (g.offsetX || 0);
+    var y = a.y + (g.offsetY || 0);
+    var sx = g.flipH ? -w : w;
+    var sy = g.flipV ? -h : h;
+    var rot = g.rotation || 0;
+    var d = paths.map(function (p) { return '<path d="' + p + '"/>'; }).join('');
+    return '<g transform="translate(' + round(x) + ',' + round(y) + ') rotate(' + round(rot) + ') scale(' + round(sx) + ',' + round(sy) + ') translate(-0.5,-0.5)">' + d + '</g>';
+  }
+
   /* ---- build --------------------------------------------------------- */
 
   /**
@@ -161,6 +193,12 @@
         '" width="' + round(signW - 2 * inset) + '" height="' +
         round(signH - 2 * inset) + '" fill="none"/>');
     }
+    var graphics = Array.isArray(opts.graphics) ? opts.graphics : [];
+    graphics.forEach(function (g) {
+      var group = graphicGroup(g || {}, ix, iy, iW, iH);
+      if (group) parts.push(group);
+    });
+
     if (hasText) {
       var box = combined.getBoundingBox();
       var tw = Math.max(1e-6, box.x2 - box.x1), th = Math.max(1e-6, box.y2 - box.y1);
@@ -184,7 +222,7 @@
         ') scale(' + round(s) + ')"><path d="' + d + '"/></g>');
     }
     if (!parts.length) {
-      throw new Error('Enter sign text, or enable the frame, to generate geometry.');
+      throw new Error('Enter sign text, add graphics, or enable the frame to generate geometry.');
     }
 
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + round(signW) +
