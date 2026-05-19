@@ -199,7 +199,10 @@
     var border = !!opts.border;
     var inset = border ? Math.max(0, opts.borderInsetMm || 0) : 0;
     var pad = Math.max(0, opts.paddingMm || 0);
-    var ix = inset + pad, iy = inset + pad;
+    var maxInsetX = Math.max(0, signW / 2 - 0.5);
+    var maxInsetY = Math.max(0, signH / 2 - 0.5);
+    var ix = clamp(inset + pad, 0, maxInsetX);
+    var iy = clamp(inset + pad, 0, maxInsetY);
     var iW = Math.max(1, signW - 2 * ix), iH = Math.max(1, signH - 2 * iy);
 
     var parts = [];
