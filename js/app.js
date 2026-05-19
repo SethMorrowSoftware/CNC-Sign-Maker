@@ -765,8 +765,8 @@
     var signH = Math.max(1, parseFloat(state.settings.signHeight) || 1);
     var inset = state.settings.frame ? Math.max(0, parseFloat(state.settings.frameInset) || 0) : 0;
     var pad = forBorderShape ? 0 : Math.max(0, parseFloat(state.settings.textPadding) || 0);
-    var ix = inset + pad;
-    var iy = inset + pad;
+    var ix = Math.min(inset + pad, Math.max(0, signW / 2 - 0.5));
+    var iy = Math.min(inset + pad, Math.max(0, signH / 2 - 0.5));
     return {
       width: Math.max(1, signW - 2 * ix),
       height: Math.max(1, signH - 2 * iy)

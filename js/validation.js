@@ -105,6 +105,21 @@
         'or set the V-bit angle on the Bit tab.');
     }
 
+
+    /* --- text-sign usable interior --- */
+    if (s.signWidth > 0 && s.signHeight > 0) {
+      var frameInset = s.frame ? Math.max(0, s.frameInset || 0) : 0;
+      var textPad = Math.max(0, s.textPadding || 0);
+      var insetTotal = frameInset + textPad;
+      var usableW = s.signWidth - 2 * insetTotal;
+      var usableH = s.signHeight - 2 * insetTotal;
+      if (usableW <= 1 || usableH <= 1) {
+        add('warn', 'Frame inset + text padding leave almost no interior area (' +
+          fmt(Math.max(0, usableW)) + ' x ' + fmt(Math.max(0, usableH)) +
+          'mm). Reduce inset/padding so text and shapes can scale predictably.');
+      }
+    }
+
     /* --- stock margin vs tool offset (spec §10) --- */
     var toolOffset = s.toolOffsetOverride > 0
       ? s.toolOffsetOverride
