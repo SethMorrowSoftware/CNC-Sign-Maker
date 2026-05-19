@@ -103,6 +103,7 @@
       minX: b.minX + tx, minY: b.minY + ty, maxX: b.maxX + tx, maxY: b.maxY + ty
     };
     return {
+      source: geometry && geometry.trace ? { trace: geometry.trace } : null,
       subpaths: subpaths,
       partBbox: partBbox,
       partWidth: partBbox.maxX - partBbox.minX,

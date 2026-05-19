@@ -247,6 +247,20 @@
     /* --- surface toolpath generation warnings --- */
     (toolpath.warnings || []).forEach(function (w) { add('warn', w); });
 
+    /* --- bitmap trace complexity / fidelity hints --- */
+    if (job && job.source && job.source.trace) {
+      var t = job.source.trace;
+      var nodes = t.nodesAfter || 0;
+      if (nodes > 120000) {
+        add('warn', 'Bitmap trace generated ' + nodes + ' nodes. This may cut slowly. ' +
+          'Increase simplify (mm), raise min island area, or use a cleaner source image.');
+      }
+      if (nodes > 0 && t.nodesBefore && nodes / t.nodesBefore > 0.9) {
+        add('info', 'Trace simplification is very light. If runtime is high, raise ' +
+          'the Simplify (mm) value slightly.');
+      }
+    }
+
     issues.sort(function (a, b) { return LEVEL_RANK[a.level] - LEVEL_RANK[b.level]; });
     return {
       issues: issues,

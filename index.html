@@ -40,9 +40,10 @@
 
     <section class="card">
       <h2>1 &middot; Artwork</h2>
-      <div class="segmented seg-2" id="input-mode">
+      <div class="segmented seg-3" id="input-mode">
         <button data-mode="text" class="active" aria-pressed="true">Text sign</button>
         <button data-mode="svg" aria-pressed="false">Upload SVG</button>
+        <button data-mode="bitmap" aria-pressed="false">Trace bitmap</button>
       </div>
 
       <div id="text-panel">
@@ -95,6 +96,27 @@
           <button class="link-btn" data-sample="text-sign.svg">text</button>
         </div>
       </div>
+
+      <div id="bitmap-panel" class="hidden">
+        <div id="bitmap-dropzone" class="dropzone" tabindex="0" role="button"
+             aria-label="Upload a bitmap file: drop a file here or activate to browse">
+          <input type="file" id="bitmap-input" accept=".png,.jpg,.jpeg,.webp,.bmp,image/png,image/jpeg,image/webp,image/bmp" hidden>
+          <div class="dropzone-inner">
+            <strong>Drop a bitmap here</strong>
+            <span>or click to browse (PNG/JPG/WebP)</span>
+          </div>
+        </div>
+        <label class="field"><span>Trace preset</span><select id="bitmap-preset"><option value="logo">Logo (high contrast)</option><option value="line">Line art</option><option value="stencil">Stencil prep</option></select></label>
+        <div class="form-grid" id="bitmap-controls">
+          <label class="field"><span>Threshold</span><input id="bitmap-threshold" type="number" min="1" max="254" step="1" value="145"></label>
+          <label class="field"><span>MM per pixel</span><input id="bitmap-mm-per-px" type="number" min="0.01" step="0.01" value="0.20"></label>
+          <label class="field"><span>Min island area (px²)</span><input id="bitmap-min-area" type="number" min="0" step="1" value="20"></label>
+          <label class="field"><span>Simplify (mm)</span><input id="bitmap-simplify" type="number" min="0.01" step="0.01" value="0.08"></label>
+        </div>
+        <div id="bitmap-trace-status" class="muted small hidden">Tracing bitmap…</div>
+        <div id="bitmap-info" class="svg-info hidden"></div>
+      </div>
+
     </section>
 
     <section class="card">
@@ -266,6 +288,7 @@
 <script src="js/lib/opentype.js"></script>
 <script src="js/geometry.js"></script>
 <script src="js/svg-parser.js"></script>
+<script src="js/bitmap-tracer.js"></script>
 <script src="js/shapes.js"></script>
 <script src="js/text-geometry.js"></script>
 <script src="js/toolpath.js"></script>

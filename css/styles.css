@@ -263,7 +263,7 @@ button { font-family: inherit; cursor: pointer; }
 .segmented.seg-ops button { flex: 1 1 28%; }
 
 /* artwork card: text-sign / SVG sub-panels */
-#text-panel, #svg-panel { display: flex; flex-direction: column; gap: 10px; }
+#text-panel, #svg-panel, #bitmap-panel { display: flex; flex-direction: column; gap: 10px; }
 #text-input { min-height: 50px; line-height: 1.4; }
 
 /* ---- fields --------------------------------------------------------- */
