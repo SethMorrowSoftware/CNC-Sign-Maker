@@ -575,6 +575,16 @@
     $('#text-panel').classList.toggle('hidden', mode !== 'text');
     $('#svg-panel').classList.toggle('hidden', mode !== 'svg');
     $('#bitmap-panel').classList.toggle('hidden', mode !== 'bitmap');
+    // Leaving bitmap mode: cancel any in-flight trace so its async result
+    // cannot land on top of the text/SVG geometry the user is switching to.
+    if (mode !== 'bitmap') {
+      bitmapTraceRunId++;
+      if (bitmapTraceWorker) {
+        try { bitmapTraceWorker.terminate(); } catch (e) {}
+        bitmapTraceWorker = null;
+      }
+      setBitmapTraceBusy(false);
+    }
     if (mode === 'text') {
       if (state.font) { rebuildTextNow(); preview.fit(); }
       else loadFontThen(function () { rebuildTextNow(); preview.fit(); });
@@ -615,12 +625,37 @@
     if (!n) return;
     n.classList.toggle('hidden', !on);
   }
+  function cancelBitmapTrace() {
+    bitmapTraceRunId++;
+    if (bitmapTraceWorker) {
+      try { bitmapTraceWorker.terminate(); } catch (e) {}
+      bitmapTraceWorker = null;
+    }
+    setBitmapTraceBusy(false);
+    toast('Bitmap trace cancelled.');
+  }
+  function buildBitmapThumb(bitmap) {
+    if (!bitmap || !bitmap.width) return null;
+    var maxSide = 160;
+    var scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    var w = Math.max(1, Math.round(bitmap.width * scale));
+    var h = Math.max(1, Math.round(bitmap.height * scale));
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.className = 'bitmap-thumb';
+    c.setAttribute('aria-label', 'Source bitmap preview');
+    try { c.getContext('2d').drawImage(bitmap, 0, 0, w, h); } catch (e) { return null; }
+    return c;
+  }
   function showBitmapInfo(meta, traced) {
     var box = $('#bitmap-info');
     if (!box) return;
     box.innerHTML = '';
+    var thumb = buildBitmapThumb(meta && meta.bitmap);
+    if (thumb) box.appendChild(thumb);
     box.appendChild(el('div', 'svg-info-name', meta.name || 'image'));
-    box.appendChild(el('div', 'svg-info-dims', meta.width + ' × ' + meta.height + ' px · ' + Math.round(meta.size / 1024) + ' KB'));
+    var sizeText = meta.size < 1024 ? meta.size + ' B' : Math.round(meta.size / 1024) + ' KB';
+    box.appendChild(el('div', 'svg-info-dims', meta.width + ' × ' + meta.height + ' px · ' + sizeText));
     if (traced) {
       box.appendChild(el('div', 'svg-info-class', traced.subpaths.length + ' traced contour(s)'));
       if (traced.trace) {
@@ -641,7 +676,7 @@
       simplifyMm: parseFloat($('#bitmap-simplify').value)
     };
     if (!isFinite(params.threshold)) params.threshold = 145;
-    params.threshold = Math.min(254, Math.max(1, params.threshold));
+    params.threshold = Math.min(255, Math.max(1, params.threshold));
     if (!isFinite(params.mmPerPixel) || params.mmPerPixel <= 0) params.mmPerPixel = 0.2;
     if (!isFinite(params.minAreaPx) || params.minAreaPx < 0) params.minAreaPx = 20;
     if (!isFinite(params.simplifyMm) || params.simplifyMm <= 0) params.simplifyMm = 0.08;
@@ -664,6 +699,10 @@
 
     function applyTraceGeometry(geometry) {
       if (runId !== bitmapTraceRunId) return;
+      // Reject results that complete after the user has moved to a different
+      // input mode — otherwise a slow trace would silently overwrite text or
+      // SVG geometry the user is now editing.
+      if (state.settings.inputMode !== 'bitmap') { setBitmapTraceBusy(false); return; }
       state.geometry = geometry;
       state.svgHash = hashString('bitmap:' + state.bitmapMeta.name + ':' + JSON.stringify(state.geometry.trace || {}));
       showBitmapInfo(state.bitmapMeta, state.geometry);
@@ -697,7 +736,10 @@
           try { applyTraceGeometry(Forge.BitmapTracer.traceImageData(img, params)); }
           catch (e3) { toast('Bitmap trace failed: ' + e3.message, 'error'); }
         };
-        worker.postMessage({ width: img.width, height: img.height, rgba: img.data.buffer, threshold: params.threshold, mmPerPixel: params.mmPerPixel, minAreaPx: params.minAreaPx, simplifyMm: params.simplifyMm }, [img.data.buffer]);
+        // Structured-clone the pixel buffer instead of transferring it — if
+        // the worker crashes on start, the main-thread fallback below still
+        // needs to read img.data, which a transfer would have detached.
+        worker.postMessage({ width: img.width, height: img.height, rgba: img.data.buffer, threshold: params.threshold, mmPerPixel: params.mmPerPixel, minAreaPx: params.minAreaPx, simplifyMm: params.simplifyMm });
         return;
       } catch (e) {}
     }
@@ -1671,6 +1713,7 @@
     ['bitmap-threshold','bitmap-mm-per-px','bitmap-min-area','bitmap-simplify'].forEach(function(id){
       var n = $("#" + id); if (n) n.addEventListener('input', debounce(function(){ if (state.settings.inputMode === 'bitmap') traceBitmapNow(); }, 120));
     });
+    $('#bitmap-trace-cancel').addEventListener('click', cancelBitmapTrace);
 
     window.addEventListener('dragover', function (e) { e.preventDefault(); });
     window.addEventListener('drop', function (e) { e.preventDefault(); });

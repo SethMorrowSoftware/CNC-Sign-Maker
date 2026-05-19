@@ -52,7 +52,10 @@
     return {
       width_mm: w * mmPerPixel,
       height_mm: h * mmPerPixel,
-      hadUnits: true,
+      // The trace inherits its scale from the user's mm-per-pixel input,
+      // not from anything intrinsic to the bitmap; mark it accordingly so
+      // downstream UI does not claim physical units it never had.
+      hadUnits: false,
       subpaths: subpaths,
       trace: {
         widthPx: w, heightPx: h, threshold: threshold,
