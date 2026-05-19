@@ -265,6 +265,21 @@ button { font-family: inherit; cursor: pointer; }
 /* artwork-source picker is a three-way switch */
 .segmented.seg-3 { grid-template-columns: 1fr 1fr 1fr; }
 
+/* bitmap trace status — message on the left, cancel link on the right */
+.bitmap-trace-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+
+/* source-bitmap thumbnail inside the bitmap-info panel */
+.bitmap-thumb {
+  display: block; margin-bottom: 6px;
+  max-width: 100%; max-height: 120px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  image-rendering: pixelated;
+}
+
 /* artwork card: text-sign / SVG sub-panels */
 #text-panel, #svg-panel, #bitmap-panel { display: flex; flex-direction: column; gap: 10px; }
 #text-input { min-height: 50px; line-height: 1.4; }

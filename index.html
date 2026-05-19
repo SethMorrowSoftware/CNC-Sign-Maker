@@ -108,12 +108,15 @@
         </div>
         <label class="field"><span>Trace preset</span><select id="bitmap-preset"><option value="logo">Logo (high contrast)</option><option value="line">Line art</option><option value="stencil">Stencil prep</option></select></label>
         <div class="form-grid" id="bitmap-controls">
-          <label class="field"><span>Threshold</span><input id="bitmap-threshold" type="number" min="1" max="254" step="1" value="145"></label>
+          <label class="field"><span>Threshold</span><input id="bitmap-threshold" type="number" min="1" max="255" step="1" value="145"></label>
           <label class="field"><span>MM per pixel</span><input id="bitmap-mm-per-px" type="number" min="0.01" step="0.01" value="0.20"></label>
           <label class="field"><span>Min island area (px²)</span><input id="bitmap-min-area" type="number" min="0" step="1" value="20"></label>
           <label class="field"><span>Simplify (mm)</span><input id="bitmap-simplify" type="number" min="0.01" step="0.01" value="0.08"></label>
         </div>
-        <div id="bitmap-trace-status" class="muted small hidden">Tracing bitmap…</div>
+        <div id="bitmap-trace-status" class="bitmap-trace-status hidden">
+          <span class="muted small">Tracing bitmap&hellip;</span>
+          <button type="button" class="link-btn" id="bitmap-trace-cancel">Cancel</button>
+        </div>
         <div id="bitmap-info" class="svg-info hidden"></div>
       </div>
 
