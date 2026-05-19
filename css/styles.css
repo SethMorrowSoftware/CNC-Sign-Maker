@@ -262,6 +262,9 @@ button { font-family: inherit; cursor: pointer; }
 .segmented.seg-ops { display: flex; flex-wrap: wrap; }
 .segmented.seg-ops button { flex: 1 1 28%; }
 
+/* artwork-source picker is a three-way switch */
+.segmented.seg-3 { grid-template-columns: 1fr 1fr 1fr; }
+
 /* artwork card: text-sign / SVG sub-panels */
 #text-panel, #svg-panel, #bitmap-panel { display: flex; flex-direction: column; gap: 10px; }
 #text-input { min-height: 50px; line-height: 1.4; }
