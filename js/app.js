@@ -212,6 +212,8 @@
   };
   var preview = null;
   var lastGcode = '';
+  var bitmapTraceRunId = 0;
+  var bitmapTraceWorker = null;
 
   /* ---- tiny DOM helpers ---------------------------------------------- */
   function $(sel) { return document.querySelector(sel); }
@@ -638,6 +640,18 @@
       minAreaPx: parseFloat($('#bitmap-min-area').value),
       simplifyMm: parseFloat($('#bitmap-simplify').value)
     };
+    if (!isFinite(params.threshold)) params.threshold = 145;
+    params.threshold = Math.min(254, Math.max(1, params.threshold));
+    if (!isFinite(params.mmPerPixel) || params.mmPerPixel <= 0) params.mmPerPixel = 0.2;
+    if (!isFinite(params.minAreaPx) || params.minAreaPx < 0) params.minAreaPx = 20;
+    if (!isFinite(params.simplifyMm) || params.simplifyMm <= 0) params.simplifyMm = 0.08;
+
+    var runId = ++bitmapTraceRunId;
+    if (bitmapTraceWorker) {
+      try { bitmapTraceWorker.terminate(); } catch (e) {}
+      bitmapTraceWorker = null;
+    }
+
     setBitmapTraceBusy(true);
     var maxW = 1400;
     var scale = state.bitmapMeta.bitmap.width > maxW ? (maxW / state.bitmapMeta.bitmap.width) : 1;
@@ -648,32 +662,51 @@
     cx.drawImage(state.bitmapMeta.bitmap, 0, 0, w, h);
     var img = cx.getImageData(0, 0, w, h);
 
+    function applyTraceGeometry(geometry) {
+      if (runId !== bitmapTraceRunId) return;
+      state.geometry = geometry;
+      state.svgHash = hashString('bitmap:' + state.bitmapMeta.name + ':' + JSON.stringify(state.geometry.trace || {}));
+      showBitmapInfo(state.bitmapMeta, state.geometry);
+      $('#preview-empty').classList.add('hidden');
+      recomputeNow();
+      setBitmapTraceBusy(false);
+    }
+
     if (window.Worker) {
       try {
         var worker = new Worker('js/workers/trace-worker.js');
+        bitmapTraceWorker = worker;
         worker.onmessage = function (ev) {
-          setBitmapTraceBusy(false);
           var r = ev.data || {};
+          if (bitmapTraceWorker === worker) bitmapTraceWorker = null;
           worker.terminate();
-          if (!r.ok) { toast('Bitmap trace failed: ' + (r.error || 'worker error'), 'error'); return; }
-          state.geometry = r.geometry;
-          state.svgHash = hashString('bitmap:' + state.bitmapMeta.name + ':' + JSON.stringify(state.geometry.trace || {}));
-          showBitmapInfo(state.bitmapMeta, state.geometry);
-          $('#preview-empty').classList.add('hidden');
-          recomputeNow();
+          if (runId !== bitmapTraceRunId) return;
+          if (!r.ok) {
+            setBitmapTraceBusy(false);
+            toast('Bitmap trace failed: ' + (r.error || 'worker error'), 'error');
+            return;
+          }
+          applyTraceGeometry(r.geometry);
+        };
+        worker.onerror = function () {
+          if (bitmapTraceWorker === worker) bitmapTraceWorker = null;
+          worker.terminate();
+          if (runId !== bitmapTraceRunId) return;
+          setBitmapTraceBusy(false);
+          toast('Bitmap trace worker crashed. Falling back to main thread.', 'error');
+          try { applyTraceGeometry(Forge.BitmapTracer.traceImageData(img, params)); }
+          catch (e3) { toast('Bitmap trace failed: ' + e3.message, 'error'); }
         };
         worker.postMessage({ width: img.width, height: img.height, rgba: img.data.buffer, threshold: params.threshold, mmPerPixel: params.mmPerPixel, minAreaPx: params.minAreaPx, simplifyMm: params.simplifyMm }, [img.data.buffer]);
         return;
       } catch (e) {}
     }
     try {
-      state.geometry = Forge.BitmapTracer.traceImageData(img, params);
-      state.svgHash = hashString('bitmap:' + state.bitmapMeta.name + ':' + JSON.stringify(state.geometry.trace || {}));
-      showBitmapInfo(state.bitmapMeta, state.geometry);
-      $('#preview-empty').classList.add('hidden');
-      recomputeNow();
-    } catch (e2) { toast('Bitmap trace failed: ' + e2.message, 'error'); }
-    setBitmapTraceBusy(false);
+      applyTraceGeometry(Forge.BitmapTracer.traceImageData(img, params));
+    } catch (e2) {
+      setBitmapTraceBusy(false);
+      toast('Bitmap trace failed: ' + e2.message, 'error');
+    }
   }
 
   function readBitmapFile(file) {
