@@ -1,6 +1,6 @@
-# LowRider Forge — SVG-to-Gcode Web Tool Specification
+# LowRider Forge — Geometry-to-Gcode Web Tool Specification
 
-A self-hosted web application for reliably converting SVG files into FluidNC-compatible gcode for the LowRider v4 CNC. Designed for engraving and cutting signs, fixtures, and parts from real-world SVG input with predictable, repeatable output.
+A self-hosted web application for reliably converting text, SVG, and bitmap geometry into FluidNC-compatible gcode for the LowRider v4 CNC. Designed for engraving and cutting signs, fixtures, and parts from real-world SVG input with predictable, repeatable output.
 
 ## 1. Project Goals
 
@@ -36,7 +36,7 @@ A self-hosted web application for reliably converting SVG files into FluidNC-com
 │                          BROWSER                                │
 │                                                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐    │
-│  │ Upload &     │  │ Toolpath     │  │  Settings panel    │    │
+│  │ Text/SVG/Bitmap│  │ Toolpath     │  │  Settings panel    │    │
 │  │ SVG parse    │→ │ generation   │→ │  (live preview)    │    │
 │  └──────────────┘  └──────────────┘  └────────────────────┘    │
 │         │                  │                    │              │
@@ -70,7 +70,24 @@ A self-hosted web application for reliably converting SVG files into FluidNC-com
 - Live preview updates as the operator drags sliders.
 - The tool works offline once loaded (good for shop computers with flaky wifi).
 
-## 4. SVG Parsing Requirements
+## 4. Geometry Ingestion Requirements
+
+
+### 4.1 Text sign generator
+- Built-in typed-text geometry generation with font loading (`opentype.js`) and layout controls (fit-to-sign, letter height, alignment, anchor, offsets, spacing, frame, and parametric graphics).
+
+### 4.2 SVG upload parsing
+The SVG parser must handle transformed/nested real-world files and resolve units to millimetres. Curves are tessellated by configurable tolerance.
+
+### 4.3 Bitmap tracing
+- Accept PNG/JPG/JPEG/WebP/BMP uploads (max 8 MB).
+- Decode with `createImageBitmap`, then downscale for tracing responsiveness (current implementation caps width at 1400 px).
+- Convert RGBA to luminance + alpha-aware grayscale and threshold into a binary grid.
+- Trace pixel-edge loops into closed contours.
+- Apply filters/cleanup: min-island area and Douglas-Peucker simplification.
+- Convert traced points into mm geometry using mm-per-pixel scaling.
+- Run tracing in a Web Worker (`js/workers/trace-worker.js`) with main-thread fallback.
+- Guard against stale async results: only the latest trace run can commit geometry.
 
 The parser must reliably handle SVGs from the real-world tools the user employs:
 - OpenSCAD exports (e.g. the V1 strut_plate.svg — single big `<path>` with many `M..L..z` subpaths).
@@ -105,7 +122,7 @@ const geometry = parseSvg(svgText);
 
 ## 5. Operation Types
 
-The tool supports four operations, selectable per-job:
+The tool supports six operations, selectable per-job:
 
 ### 5.1 Engrave (centerline)
 - Bit traces the path centerline at a single shallow depth.
@@ -118,12 +135,19 @@ The tool supports four operations, selectable per-job:
 - Tabs on final pass only: bit lifts at N evenly-spaced positions to leave material connections.
 - Useful for: cutting out part outlines.
 
-### 5.3 Pocket / cut inside
+### 5.3 Pocket
 - Bit traces the path **inside** the geometry, offset inward.
 - Multi-depth passes.
 - Useful for: cutting opening cutouts.
 
-### 5.4 Drill / hole circle
+### 5.4 V-carve
+- V-carves every closed contour with a V-bit using included-angle geometry.
+- Final depth is a cap; wider regions may hit the cap while narrow regions run shallower.
+
+### 5.5 Profile in
+- Multi-depth internal profile offset for interior cutouts/openings.
+
+### 5.6 Drill / hole circle
 - For small features where `bit_diameter > hole_diameter`: single plunge cycle at hole center (creates oversized hole).
 - For features where `bit_diameter < hole_diameter`: bit plunges at center, traces a circle at radius `(hole_d/2 - bit_r)`, returns. Multi-depth pecking optional.
 - Useful for: M3/M5/M6 mounting hole patterns.
@@ -157,7 +181,7 @@ Every setting that has caused a real-world problem during actual cutting. Settin
 ### 6.3 Operation settings (per-job)
 | Setting | Type | Default | Note |
 |---|---|---|---|
-| Operation | enum | engrave | engrave / profile-out / profile-in / drill |
+| Operation | enum | engrave | engrave / pocket / vcarve / profile-out / profile-in / drill |
 | Final depth (mm) | float | — | Negative = below stock surface |
 | DOC per pass (mm) | float | — | Positive value |
 | Finishing allowance (mm) | float | 0.15 | Added to offset for clean edge |
@@ -172,7 +196,7 @@ Every setting that has caused a real-world problem during actual cutting. Settin
 | Tab count per profile | int | 4 | |
 | Tab thickness (mm) | float | 1.5 | Material left below bit at tab |
 | Tab width (mm) | float | 6.0 | Along perimeter |
-| Tab placement | enum | even | even / manual (drag markers on preview) |
+| Tab placement | enum | even | currently even spacing in implementation |
 
 ### 6.5 Job geometry settings
 | Setting | Type | Default | Note |
@@ -180,7 +204,7 @@ Every setting that has caused a real-world problem during actual cutting. Settin
 | Scale (%) | float | 100 | Uniform scaling |
 | Rotation | enum | 0° | 0 / 90 / 180 / 270 CW or CCW |
 | Origin position | enum | bottom-left | bottom-left / center / top-left / custom |
-| Stock margin (mm) | float | 10 | Distance from work zero to nearest geometry |
+| Stock margin (mm) | float | 0 | Extra stock around part bounds (0 = stock equals part size) |
 | Hole-vs-trace threshold (mm²) | int | 50 | Subpaths below this area = drill cycle |
 | Target hole diameter (mm) | float | — | For closed circles below threshold |
 
@@ -205,7 +229,10 @@ Single-page application, three columns desktop / stacked mobile:
 ┌─────────────────────────────────────────────────────────────────┐
 │  LEFT (320px)        │  CENTER (flex)    │  RIGHT (320px)       │
 │                      │                   │                      │
-│  - SVG upload        │   ┌─────────────┐ │  Settings (tabs):    │
+│  - Input mode: text/SVG/bitmap │   ┌─────────────┐ │  Settings (tabs):    │
+│  - Text controls              │   │             │ │   - Bit              │
+│  - SVG upload                 │   │  Canvas     │ │   - Material         │
+│  - Bitmap trace panel         │   │  Preview    │ │   - Operation        │
 │  - Job presets       │   │             │ │   - Bit              │
 │  - Material picker   │   │  Canvas     │ │   - Material         │
 │  - Bit picker        │   │  Preview    │ │   - Operation        │
@@ -555,7 +582,7 @@ Specific test SVGs to include:
 1. Upload SVG.
 2. Select bit (or accept the auto-suggested one based on material).
 3. Select material (or accept the auto-suggested DOC and feeds).
-4. Choose operation (engrave / profile-out / profile-in / drill).
+4. Choose operation (engrave / pocket / vcarve / profile-out / profile-in / drill).
 5. Set final depth and confirm tabs (for profile-out).
 6. Position and rotate to fit your stock and machine envelope.
 7. Review preview — visually confirm the toolpath, tabs, origin.
@@ -566,3 +593,7 @@ Specific test SVGs to include:
 ---
 
 *This spec captures every gotcha I've hit in real CNC work to date. As you build and run jobs, the gotchas list at section 14 will grow — append to it. That section is the most valuable part of this document.*
+
+## 13. Implementation Status (May 19, 2026)
+
+This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing with stale-run protection, six operation modes, and the current tab behavior (even placement).
