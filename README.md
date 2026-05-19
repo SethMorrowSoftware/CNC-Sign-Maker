@@ -1,7 +1,7 @@
 # LowRider Forge
 
 A self-hosted web tool that turns **typed text, parametric shapes and uploaded
-SVG files** into FluidNC-compatible gcode for the **LowRider v4** CNC. Built for
+SVG files, and traced bitmap images** into FluidNC-compatible gcode for the **LowRider v4** CNC. Built for
 engraving and cutting signs, plaques, fixtures and parts with predictable,
 repeatable output.
 
@@ -27,6 +27,7 @@ the core of the tool keeps working even when the backend is unreachable.
   - [Text signs](#text-signs)
   - [The shape builder](#the-shape-builder)
   - [SVG upload](#svg-upload)
+  - [Bitmap tracing](#bitmap-tracing)
 - [Operations](#operations)
 - [Settings reference](#settings-reference)
 - [Materials &amp; bits](#materials--bits)
@@ -100,8 +101,7 @@ directories are usually NFS-backed and SQLite's WAL mode is not NFS-safe.
 
 ## Quick start
 
-1. **Choose your artwork.** Type sign text (the default) or switch to *Upload
-   SVG* at the top of the Artwork panel.
+1. **Choose your artwork.** Type sign text (the default), upload an SVG, or switch to *Trace bitmap* at the top of the Artwork panel.
 2. **Pick an operation** — engrave, pocket, V-carve, profile-out, profile-in or
    drill.
 3. **Choose a material and bit.** Selecting a material auto-fills the
@@ -123,14 +123,13 @@ A single-page app in three columns (stacked on narrow screens):
 
 | Column | Contents |
 |--------|----------|
-| **Left** | Artwork (text or SVG), operation picker, material &amp; bit pickers, job presets, pre-flight checks, the **Generate gcode** button. |
+| **Left** | Artwork (text, SVG, or bitmap tracing), operation picker, material &amp; bit pickers, job presets, pre-flight checks, the **Generate gcode** button. |
 | **Centre** | The live toolpath preview and its toolbar. |
 | **Right** | Settings tabs (Operation, Tabs, Geometry, Machine, Bit, Material) and a live job summary — stock size, runtime estimate, Z-pass count and chip load. |
 
 ## Artwork
 
-Start every job from one of two sources, chosen with the switch at the top of
-the Artwork panel.
+Start every job from one of three sources, chosen with the switch at the top of the Artwork panel.
 
 ### Text signs
 
@@ -197,6 +196,30 @@ SVGs ship in `samples/` — a square, a circle, a holes plate and a text sign.
 
 > `<text>` elements are not rasterised — convert text to paths before export,
 > or use the built-in text generator.
+
+### Bitmap tracing
+
+Switch to *Trace bitmap* to convert high-contrast raster artwork (PNG, JPG,
+WebP, BMP) into closed contours you can engrave, pocket, profile, drill or
+V-carve.
+
+- **Input limits.** Bitmap uploads are capped at 8 MB; oversized images are
+  downscaled for tracing (up to 1400 px wide) to keep tracing responsive.
+- **Trace controls.**
+  - **Threshold** controls black/white segmentation (lower = darker pixels kept).
+  - **MM per pixel** sets the physical size of traced geometry.
+  - **Min island area** removes tiny specks/noise islands.
+  - **Simplify** reduces node count while preserving contour shape.
+- **Presets.** Logo, line-art and stencil presets provide tuned defaults for
+  common artwork types.
+- **Worker tracing.** Tracing runs in a Web Worker when available, with a
+  main-thread fallback if worker execution fails.
+- **Stale-result protection.** Rapid control changes cannot apply outdated trace
+  results; only the most recent run updates the geometry/preview.
+
+Use the trace info panel to review contour count and node reduction (before →
+after simplification) before generating toolpaths.
+
 
 ## Operations
 
@@ -364,8 +387,10 @@ limitations*).
 index.html               Single-page app
 css/styles.css            Theme
 js/
-  app.js                  State, form generation, event wiring
+  app.js                  State, form generation, event wiring (text/SVG/bitmap)
   svg-parser.js           SVG -> millimetre geometry (transforms, units, curves)
+  bitmap-tracer.js        Bitmap raster -> traced contour geometry
+  workers/trace-worker.js Workerized bitmap tracing pipeline
   text-geometry.js        Typed text + font -> sign geometry
   shapes.js               Parametric shape library
   geometry.js             Polygon offsetting (Clipper) + geometry helpers
