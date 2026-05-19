@@ -10,6 +10,7 @@
   var VERSION = '1.0.0';
   var MAX_SVG_BYTES = 4 * 1024 * 1024;
   var MAX_FONT_BYTES = 8 * 1024 * 1024;
+  var MAX_BITMAP_BYTES = 8 * 1024 * 1024;
 
   /* ---- defaults ------------------------------------------------------- */
   var DEFAULTS = {
@@ -204,6 +205,7 @@
     settings: Object.assign({}, DEFAULTS),
     geometry: null, job: null, toolpath: null, validation: null,
     svgText: null, svgName: null, svgHash: null,
+    bitmapMeta: null,
     bits: [], materials: [], presets: [],
     bit: null, material: null, font: null,
     serverUp: false
@@ -569,12 +571,16 @@
       b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
     $('#text-panel').classList.toggle('hidden', mode !== 'text');
-    $('#svg-panel').classList.toggle('hidden', mode === 'text');
+    $('#svg-panel').classList.toggle('hidden', mode !== 'svg');
+    $('#bitmap-panel').classList.toggle('hidden', mode !== 'bitmap');
     if (mode === 'text') {
       if (state.font) { rebuildTextNow(); preview.fit(); }
       else loadFontThen(function () { rebuildTextNow(); preview.fit(); });
-    } else if (state.svgText) {
+    } else if (mode === 'svg' && state.svgText) {
       reparseAndRecompute();
+      if (state.geometry) preview.fit();
+    } else if (mode === 'bitmap' && state.bitmapMeta) {
+      traceBitmapNow();
       if (state.geometry) preview.fit();
     } else {
       // SVG mode with nothing uploaded — drop any leftover text geometry so
@@ -587,6 +593,103 @@
 
 
 
+
+
+
+  function applyBitmapPreset(name) {
+    var map = {
+      logo: { threshold: 145, minArea: 20, simplify: 0.08 },
+      line: { threshold: 165, minArea: 8, simplify: 0.05 },
+      stencil: { threshold: 135, minArea: 30, simplify: 0.12 }
+    };
+    var cfg = map[name] || map.logo;
+    $('#bitmap-threshold').value = cfg.threshold;
+    $('#bitmap-min-area').value = cfg.minArea;
+    $('#bitmap-simplify').value = cfg.simplify;
+  }
+
+  function setBitmapTraceBusy(on) {
+    var n = $('#bitmap-trace-status');
+    if (!n) return;
+    n.classList.toggle('hidden', !on);
+  }
+  function showBitmapInfo(meta, traced) {
+    var box = $('#bitmap-info');
+    if (!box) return;
+    box.innerHTML = '';
+    box.appendChild(el('div', 'svg-info-name', meta.name || 'image'));
+    box.appendChild(el('div', 'svg-info-dims', meta.width + ' × ' + meta.height + ' px · ' + Math.round(meta.size / 1024) + ' KB'));
+    if (traced) {
+      box.appendChild(el('div', 'svg-info-class', traced.subpaths.length + ' traced contour(s)'));
+      if (traced.trace) {
+        var before = traced.trace.nodesBefore || 0;
+        var after = traced.trace.nodesAfter || 0;
+        box.appendChild(el('div', 'svg-info-class', 'Nodes: ' + before + ' → ' + after));
+      }
+    }
+    box.classList.remove('hidden');
+  }
+
+  function traceBitmapNow() {
+    if (!state.bitmapMeta || !state.bitmapMeta.bitmap || !Forge.BitmapTracer) return;
+    var params = {
+      threshold: parseFloat($('#bitmap-threshold').value),
+      mmPerPixel: parseFloat($('#bitmap-mm-per-px').value),
+      minAreaPx: parseFloat($('#bitmap-min-area').value),
+      simplifyMm: parseFloat($('#bitmap-simplify').value)
+    };
+    setBitmapTraceBusy(true);
+    var maxW = 1400;
+    var scale = state.bitmapMeta.bitmap.width > maxW ? (maxW / state.bitmapMeta.bitmap.width) : 1;
+    var w = Math.max(1, Math.round(state.bitmapMeta.bitmap.width * scale));
+    var h = Math.max(1, Math.round(state.bitmapMeta.bitmap.height * scale));
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var cx = c.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(state.bitmapMeta.bitmap, 0, 0, w, h);
+    var img = cx.getImageData(0, 0, w, h);
+
+    if (window.Worker) {
+      try {
+        var worker = new Worker('js/workers/trace-worker.js');
+        worker.onmessage = function (ev) {
+          setBitmapTraceBusy(false);
+          var r = ev.data || {};
+          worker.terminate();
+          if (!r.ok) { toast('Bitmap trace failed: ' + (r.error || 'worker error'), 'error'); return; }
+          state.geometry = r.geometry;
+          state.svgHash = hashString('bitmap:' + state.bitmapMeta.name + ':' + JSON.stringify(state.geometry.trace || {}));
+          showBitmapInfo(state.bitmapMeta, state.geometry);
+          $('#preview-empty').classList.add('hidden');
+          recomputeNow();
+        };
+        worker.postMessage({ width: img.width, height: img.height, rgba: img.data.buffer, threshold: params.threshold, mmPerPixel: params.mmPerPixel, minAreaPx: params.minAreaPx, simplifyMm: params.simplifyMm }, [img.data.buffer]);
+        return;
+      } catch (e) {}
+    }
+    try {
+      state.geometry = Forge.BitmapTracer.traceImageData(img, params);
+      state.svgHash = hashString('bitmap:' + state.bitmapMeta.name + ':' + JSON.stringify(state.geometry.trace || {}));
+      showBitmapInfo(state.bitmapMeta, state.geometry);
+      $('#preview-empty').classList.add('hidden');
+      recomputeNow();
+    } catch (e2) { toast('Bitmap trace failed: ' + e2.message, 'error'); }
+    setBitmapTraceBusy(false);
+  }
+
+  function readBitmapFile(file) {
+    if (!file) return;
+    if (!/\.(png|jpe?g|webp|bmp)$/i.test(file.name || '')) { toast('Please upload PNG/JPG/WebP/BMP.', 'error'); return; }
+    if (file.size > MAX_BITMAP_BYTES) { toast('Bitmap file is too large. Maximum allowed size is 8 MB.', 'error'); return; }
+    createImageBitmap(file).then(function (bmp) {
+      state.bitmapMeta = { name: file.name, size: file.size, width: bmp.width, height: bmp.height, bitmap: bmp };
+      if (state.settings.jobName === 'job') state.settings.jobName = (file.name || 'bitmap').replace(/\.[^.]+$/, '');
+      applyBitmapPreset($('#bitmap-preset').value || 'logo');
+      showBitmapInfo(state.bitmapMeta);
+      traceBitmapNow();
+      preview.fit();
+      toast('Loaded bitmap ' + file.name + '.');
+    }).catch(function (e) { toast('Could not decode bitmap: ' + e.message, 'error'); });
+  }
   function formatShapeParamHint(param, width, height) {
     if (!param || param.unit !== 'ratio') return '';
     var w = isFinite(width) && width > 0 ? width : 0;
@@ -1523,6 +1626,19 @@
     dz.addEventListener('drop', function (e) {
       if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
     });
+
+    var bdz = $('#bitmap-dropzone'), binput = $('#bitmap-input');
+    bdz.addEventListener('click', function () { binput.click(); });
+    bdz.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); binput.click(); } });
+    binput.addEventListener('change', function () { readBitmapFile(binput.files[0]); });
+    ['dragenter', 'dragover'].forEach(function (ev) { bdz.addEventListener(ev, function (e) { e.preventDefault(); bdz.classList.add('drag'); }); });
+    ['dragleave', 'drop'].forEach(function (ev) { bdz.addEventListener(ev, function (e) { e.preventDefault(); bdz.classList.remove('drag'); }); });
+    bdz.addEventListener('drop', function (e) { if (e.dataTransfer.files[0]) readBitmapFile(e.dataTransfer.files[0]); });
+    $('#bitmap-preset').addEventListener('change', function(){ applyBitmapPreset(this.value); if (state.settings.inputMode === 'bitmap') traceBitmapNow(); });
+    ['bitmap-threshold','bitmap-mm-per-px','bitmap-min-area','bitmap-simplify'].forEach(function(id){
+      var n = $("#" + id); if (n) n.addEventListener('input', debounce(function(){ if (state.settings.inputMode === 'bitmap') traceBitmapNow(); }, 120));
+    });
+
     window.addEventListener('dragover', function (e) { e.preventDefault(); });
     window.addEventListener('drop', function (e) { e.preventDefault(); });
 
