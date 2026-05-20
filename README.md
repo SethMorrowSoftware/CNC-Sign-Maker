@@ -125,7 +125,7 @@ A single-page app in three columns (stacked on narrow screens):
 |--------|----------|
 | **Left** | Artwork (text, SVG, or bitmap tracing), operation picker, material &amp; bit pickers, job presets, pre-flight checks, the **Generate gcode** button. |
 | **Centre** | The live toolpath preview and its toolbar. |
-| **Right** | Settings tabs (Operation, Tabs, Geometry, Machine, Bit, Material) and a live job summary — stock size, runtime estimate, Z-pass count and chip load. |
+| **Right** | Settings tabs (Operation, Tabs, Geometry, Machine, Bit, Material) and a live job summary — stock size, runtime estimate, Z-pass count, chip load, cut distance and rapid distance. |
 
 ## Artwork
 
@@ -137,10 +137,12 @@ The text generator lays your text out in a chosen font and feeds it into the
 same toolpath pipeline as an uploaded SVG — the sign generator is just another
 geometry source.
 
-- **Fonts.** The picker ships with a type library spanning sans, condensed,
-  heavy, slab, serif, display, script and hand-lettered faces. Six core faces
-  are bundled with the tool; the rest are fetched the first time you select
-  them. You can also **upload your own** `.ttf`, `.otf` or `.woff` font.
+- **Fonts.** The picker ships with a 30-strong type library spanning sans,
+  condensed, heavy, slab, serif, display, script and hand-lettered faces.
+  Six core faces (Montserrat, Oswald, Archivo Black, Roboto Slab, Merriweather
+  and Pacifico) are bundled with the tool; the remaining 24 are fetched the
+  first time you select them. You can also **upload your own** `.ttf`, `.otf`
+  or `.woff` font.
 - **Sizing.** Set the sign width and height in millimetres, then either let the
   text **auto-fit** the usable area or switch off *Fit text to sign* and dial in
   an exact **letter height** (capital-letter height).
@@ -167,19 +169,23 @@ blank, or profile-out a rectangle.
 Below the text controls, the shape builder adds reusable parametric vector
 graphics to the sign — all sized in millimetres:
 
-- **Shapes** — rectangle, rounded rectangle, ellipse, circle, hexagon, diamond,
-  star, arrows (left/right), pill, and matching **border** variants
-  (rectangular, rounded, ellipse, hexagon, pill, ring).
+- **Shapes** — rectangle, rounded rectangle, ellipse, circle, triangle,
+  pentagon, hexagon, octagon, diamond, star, arrows (left/right), cross/plus,
+  chevron, trapezoid, parallelogram, banner/ribbon, heart, gear and
+  lightning bolt — plus matching **border** variants (rectangular, rounded,
+  ellipse, hexagon, pill, ring).
 - Each shape has a **width, height, anchor, X/Y offset and rotation**, plus
   shape-specific parameters (corner radius, border thickness, star points,
-  arrow head/shaft ratios, and so on).
+  arrow head/shaft ratios, gear teeth, and so on).
 - **Add shape** drops in the shape configured at the top of the builder;
   **Add border** drops in a border framed to the sign.
 - **Auto-fit** scales a shape to the usable sign area (with or without keeping
   its aspect ratio); **Auto-fit all** does every shape at once.
-- **Quick layout presets** arrange the text and shapes together — text above /
-  shape below, side by side, centred overlap, and so on.
-- Shapes can also be **dragged on the preview** to reposition them.
+- **Quick layout presets** arrange the text and shapes together — text top /
+  shape bottom, shape top / text bottom, side by side either way, and
+  centred overlap.
+- Shapes can also be **dragged on the preview** to reposition them, clamped to
+  the usable sign interior so the sign envelope never changes.
 
 ### SVG upload
 
@@ -322,8 +328,16 @@ The validator encodes the hard-won lessons from real bench time:
 - **Through-cut depth** is sanity-checked against material thickness and the
   spoilboard overage.
 - **V-carving** requires a V-bit with a valid included angle.
+- **Stock margin smaller than the tool offset** on profile-out warns the
+  outside toolpath may run off the stock — with a one-click fix.
+- **Negative XY coordinates** with the front-left origin block generation,
+  so the LowRider's positive-only work area is never violated.
+- **Oversized drilled holes** (hole diameter ≤ bit diameter) raise a warning
+  and are documented in the gcode header.
 - **Parametric-looking parts** trigger an info banner suggesting you regenerate
   the SVG at the correct size rather than scaling it.
+- **Bitmap traces with very high node counts** warn that the cut will be
+  slow and suggest raising the simplify value.
 - **Nominal plywood thickness** is flagged — measure your actual stock.
 
 ## The preview

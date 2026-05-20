@@ -229,22 +229,22 @@ Single-page application, three columns desktop / stacked mobile:
 ┌─────────────────────────────────────────────────────────────────┐
 │  LEFT (320px)        │  CENTER (flex)    │  RIGHT (320px)       │
 │                      │                   │                      │
-│  - Input mode: text/SVG/bitmap │   ┌─────────────┐ │  Settings (tabs):    │
-│  - Text controls              │   │             │ │   - Bit              │
-│  - SVG upload                 │   │  Canvas     │ │   - Material         │
-│  - Bitmap trace panel         │   │  Preview    │ │   - Operation        │
-│  - Job presets       │   │             │ │   - Bit              │
-│  - Material picker   │   │  Canvas     │ │   - Material         │
-│  - Bit picker        │   │  Preview    │ │   - Operation        │
-│  - Operation picker  │   │             │ │   - Tabs             │
-│                      │   │             │ │   - Geometry         │
-│  Validation:         │   └─────────────┘ │   - Machine          │
-│   - Fits machine? ✓  │                   │                      │
-│   - Bit can reach    │   Toolbar:        │  Live values:        │
-│     full depth? ✓    │     [Zoom +/-]    │   - Stock required   │
-│   - Holes vs bit     │     [Fit]         │   - Est. runtime     │
-│     dia warnings     │     [Show rapids] │   - Total Z passes   │
-│                      │     [Show tabs]   │                      │
+│  Artwork:            │   ┌────────────┐  │  Settings (tabs):    │
+│   - Text sign        │   │            │  │   - Operation        │
+│   - Upload SVG       │   │  Canvas    │  │   - Tabs             │
+│   - Trace bitmap     │   │  preview   │  │   - Geometry         │
+│  Operation picker    │   │            │  │   - Machine          │
+│  Material picker     │   │            │  │   - Bit              │
+│  Bit picker          │   │            │  │   - Material         │
+│  Job presets         │   └────────────┘  │                      │
+│                      │                   │  Live job summary:   │
+│  Pre-flight checks:  │   Toolbar:        │   - Stock required   │
+│   - Fits machine? ✓  │     [Zoom +/-]    │   - Est. runtime     │
+│   - Bit can reach    │     [Fit]         │   - Total Z passes   │
+│     full depth? ✓    │     [Rapids]      │   - Chip load        │
+│   - HDPE + flutes?   │     [Tabs]        │   - Cut distance     │
+│   - Tabs ≥ 1mm?      │     [Reference]   │   - Rapid distance   │
+│                      │                   │                      │
 │  Buttons:            │                   │                      │
 │   [Generate gcode]   │                   │                      │
 │   [Save preset]      │                   │                      │
@@ -507,38 +507,48 @@ Real lessons from real bench time — every one of these caused a problem during
 - **Mobile-friendly preview** that lets operator view the toolpath on a phone while at the machine.
 - **Direct upload to FluidNC** via the controller's WebUI API (no SD card swap needed).
 
-## 16. File Structure (suggested)
+## 16. File Structure (as shipped)
 
 ```
-lowrider-forge/
-├── public/
-│   ├── index.html                  Main app
-│   ├── css/
-│   │   └── styles.css
-│   ├── js/
-│   │   ├── app.js                  Top-level state, event wiring
-│   │   ├── svg-parser.js           Path parsing, tessellation
-│   │   ├── geometry.js             Polygon ops (uses clipper)
-│   │   ├── toolpath.js             Generates toolpaths per operation
-│   │   ├── gcode-emitter.js        Toolpath → gcode strings
-│   │   ├── preview.js              Canvas rendering
-│   │   ├── validation.js           Pre-flight checks
-│   │   ├── presets.js              Save/load via /api
-│   │   └── lib/
-│   │       └── clipper.min.js      Vendored polygon offsetting
-│   └── img/
-│       └── logo.svg
+cnc-sign-maker/
+├── index.html                     Single-page app
+├── css/
+│   └── styles.css
+├── js/
+│   ├── app.js                     Top-level state, event wiring
+│   ├── svg-parser.js              Path parsing, tessellation
+│   ├── bitmap-tracer.js           Bitmap raster → traced contour geometry
+│   ├── text-geometry.js           Typed text + font → sign geometry
+│   ├── shapes.js                  Parametric shape library
+│   ├── geometry.js                Polygon ops (uses Clipper)
+│   ├── toolpath.js                Generates toolpaths per operation
+│   ├── gcode-emitter.js           Toolpath → gcode strings
+│   ├── preview.js                 Canvas rendering, pan/zoom, drag
+│   ├── validation.js              Pre-flight checks
+│   ├── presets.js                 API client + LocalStorage autosave
+│   ├── workers/
+│   │   └── trace-worker.js        Bitmap tracing in a Web Worker
+│   └── lib/
+│       ├── clipper.js             Vendored Clipper 6.4.2 (Boost license)
+│       └── opentype.js            Vendored opentype.js (MIT)
+├── img/
+│   └── logo.svg
 ├── api/
-│   ├── index.php                   Router
+│   ├── index.php                  Router
 │   ├── bits.php
 │   ├── materials.php
 │   ├── presets.php
 │   ├── jobs.php
-│   └── db.php                      SQLite helpers
+│   └── db.php                     SQLite schema, seed data, helpers
+├── fonts/                         Bundled open-licensed sign fonts (+ licenses)
+├── samples/                       Test SVGs (square, circle, holes plate, text)
 ├── data/
-│   ├── forge.sqlite                Created on first run
-│   └── jobs/                       Saved gcode files
-├── install.sh                      Initial DB seed + permissions
+│   ├── forge.sqlite               Created on first run (gitignored)
+│   ├── .htaccess                  Denies direct web access to data
+│   └── jobs/                      Saved gcode files (gitignored)
+├── install.sh                     Optional initial DB seed + permissions
+├── .htaccess                      Root server config (Apache / cPanel)
+├── spec.md                        This document
 └── README.md
 ```
 
@@ -546,12 +556,11 @@ lowrider-forge/
 
 For each release, ship with sample jobs that produce known-good gcode. A reference set of (SVG input, expected gcode output) pairs the developer can diff against to catch regressions.
 
-Specific test SVGs to include:
-- A simple square (validates basic offsetting and tabs).
-- A circle (validates G2/G3 arc emission or polyline approximation).
-- The V1 strut plate (validates complex geometry with both outer profiles and holes).
-- A piece of text (validates curve tessellation).
-- A multi-color logo (validates classification of "decorative" vs "structural" elements — though this overlaps with operation selection).
+Test SVGs shipped in `samples/`:
+- `square.svg` — a simple square (validates basic offsetting and tabs).
+- `circle.svg` — a circle (validates G2/G3 arc emission or polyline approximation).
+- `holes-plate.svg` — a plate with multiple holes (validates complex geometry with outer profiles, hole-vs-trace classification and drill cycles).
+- `text-sign.svg` — a piece of text (validates curve tessellation).
 
 ## 18. Out of Scope (v1)
 
@@ -594,6 +603,6 @@ Specific test SVGs to include:
 
 *This spec captures every gotcha I've hit in real CNC work to date. As you build and run jobs, the gotchas list at section 14 will grow — append to it. That section is the most valuable part of this document.*
 
-## 13. Implementation Status (May 19, 2026)
+## 19. Implementation Status
 
-This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing with stale-run protection, six operation modes, and the current tab behavior (even placement).
+This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing with stale-run protection, six operation modes, and the current tab behavior (even placement). The seeded library ships 19 bits, 20 materials and 4 sample presets (see `api/db.php`), and the shape builder offers 20 base shapes plus 6 border variants (see `js/shapes.js`).
