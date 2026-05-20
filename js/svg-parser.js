@@ -37,7 +37,9 @@
       switch (t[1]) {
         case 'matrix':    local = a.length === 6 ? a : null; break;
         case 'translate': local = [1, 0, 0, 1, a[0] || 0, a[1] || 0]; break;
-        case 'scale':     local = [a[0] || 1, 0, 0, a.length > 1 ? a[1] : a[0], 0, 0]; break;
+        case 'scale':
+          local = [a.length ? a[0] : 1, 0, 0, a.length > 1 ? a[1] : (a.length ? a[0] : 1), 0, 0];
+          break;
         case 'rotate':
           var r = (a[0] || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
           local = [c, s, -s, c, 0, 0];
