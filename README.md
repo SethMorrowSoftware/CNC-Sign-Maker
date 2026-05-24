@@ -190,18 +190,24 @@ graphics to the sign — all sized in millimetres:
 ### SVG upload
 
 Switch to *Upload SVG* to drop in your own artwork. The parser walks every
-element, applies nested transforms, resolves units to millimetres and
-tessellates curves (`C / S / Q / T / A`) into line segments at a controllable
-tolerance. It handles paths, rectangles, circles, ellipses, lines, polylines,
-polygons and `<use>` references from Inkscape, Illustrator, Affinity, OpenSCAD
-and hand-made files.
+element, applies nested transforms, resolves units to millimetres (mm / cm / in
+/ pt / pc / px, case-insensitive) and tessellates curves (`C / S / Q / T / A`)
+into line segments at a controllable tolerance. It handles paths, rectangles,
+circles, ellipses, lines, polylines, polygons, `<use>` references (including
+`<use>` of `<symbol>` with width/height overrides), and respects
+`preserveAspectRatio` so viewport-resized files cut at the correct proportions.
+Files with `<style>.hidden{display:none}` plus `class="hidden"` honour the
+hidden layers — common pattern from Inkscape and Illustrator exports.
 
 Each closed subpath is classified as an **outer profile** or a **hole** by area
-(the *hole-vs-trace threshold*); open subpaths become engraving lines. Four test
-SVGs ship in `samples/` — a square, a circle, a holes plate and a text sign.
+(the *hole-vs-trace threshold*); open subpaths become engraving lines. Open
+paths that visually close (last vertex within 0.01 mm of the first) are
+promoted to closed automatically. Four test SVGs ship in `samples/` — a square,
+a circle, a holes plate and a text sign.
 
-> `<text>` elements are not rasterised — convert text to paths before export,
-> or use the built-in text generator.
+> `<text>` elements are not rasterised. An SVG containing only text raises a
+> clear error directing you to convert text to paths in your editor (Inkscape:
+> *Path → Object to Path*) or use the built-in Text sign mode.
 
 ### Bitmap tracing
 
@@ -231,12 +237,12 @@ after simplification) before generating toolpaths.
 
 | Operation | What it does |
 |-----------|--------------|
-| **Engrave** | Traces the path centreline at a single depth. No tool compensation — outline lettering for text, plus open engraving lines. |
+| **Engrave** | Traces the path centreline. For shallow cuts (≤ DOC) it's a single pass; deeper engraves step down in DOC increments like every other op. No tool compensation — outline lettering for text, plus open engraving lines. |
 | **Pocket** | Clears the inside of every closed shape with concentric passes — solid, filled lettering. Counters (the holes in O, A, e) are kept. |
 | **V-carve** | V-carves closed shapes with a V-bit for crisp V-cut lettering. Cut depth follows the bit's included angle so the flanks meet the surface exactly on the outline; the final depth caps how deep wide areas go. |
 | **Profile out** | Cuts **outside** a closed path (tool radius + finishing allowance). Multi-depth, with holding tabs. |
 | **Profile in** | Cuts **inside** a closed path — pockets and opening cutouts. Multi-depth. |
-| **Drill** | Plunge- or circle-bores each closed feature. Holes smaller than the bit are plunge-drilled oversized. |
+| **Drill** | Plunge- or circle-bores **circular** closed features. Holes smaller than the bit are plunge-drilled oversized. Non-circular small features (squares, irregular blobs) automatically fall back to profile-in so the cutter follows the actual shape — drilling a square as a circle would gouge past the corners by ~40%. |
 
 **Cut order.** Small closed features (below the *hole-vs-trace threshold*) are
 always given a drill cycle and emitted **first**, while the bit is freshest;
@@ -246,7 +252,16 @@ can move.
 **Holding tabs.** On profile-out jobs, tabs leave thin material bridges so the
 part stays connected to the stock. Tabs are evenly spaced and the tab Z profile
 is applied on **every depth pass** — an intermediate pass can never cut straight
-through a tab and break the part loose before the job finishes.
+through a tab and break the part loose before the job finishes. When the
+material thickness is known (selected from the library), the tab Z anchors to
+the material bottom so the **tab thickness** setting equals the actual
+remaining material — without that, through-cut overage would silently produce a
+tab thinner than requested (e.g. a 1.5 mm setting could leave only 0.85 mm).
+
+**Drill chip clearing.** Multi-pass drilling retracts above the stock surface
+between every depth pass (and between every peck when peck mode is on), then
+rapids back down through the cleared hole — so chips evacuate properly even
+deep into a hole.
 
 ## Settings reference
 
@@ -314,30 +329,54 @@ are advisory. Many issues offer a one-click **Apply fix**.
 
 The validator encodes the hard-won lessons from real bench time:
 
-- **M0 pauses are off by default** — they silently halt the program. Turning
-  them on raises an info banner.
-- **Tabs below 1&nbsp;mm thick are blocked**; above 2&nbsp;mm raises a
-  flush-trim warning.
-- **HDPE with a multi-flute bit is a blocking error** — multi-flute bits melt
-  HDPE. Acrylic with a multi-flute bit raises a warning.
-- **Bit cutting length** is checked against the depth the toolpath actually
-  reaches (with a 2&nbsp;mm safety margin).
-- **Chip load** is checked against the 0.05–0.30&nbsp;mm window.
-- **The machine envelope** is checked; if the job would fit rotated, a 90°
-  rotation is offered.
-- **Through-cut depth** is sanity-checked against material thickness and the
-  spoilboard overage.
-- **V-carving** requires a V-bit with a valid included angle.
-- **Stock margin smaller than the tool offset** on profile-out warns the
-  outside toolpath may run off the stock — with a one-click fix.
+**Catastrophic — blocks generation:**
+
+- **Final depth must be negative.** Zero or positive `finalDepth` would drive
+  the bit upward into the spindle instead of cutting. Blocked.
+- **Safe Z must be positive.** A zero or negative Safe Z lets the bit drag
+  across the work during rapids.
+- **Bit cutting length** is checked against `|cut depth| + Safe Z` — the shank
+  must clear the work at retract, not just the cutting tip.
+- **HDPE with a multi-flute bit** — multi-flute bits melt HDPE and can flame.
 - **Negative XY coordinates** with the front-left origin block generation,
   so the LowRider's positive-only work area is never violated.
+- **Tabs below 1&nbsp;mm** thick are blocked — they snap mid-cut.
+- **V-carving** requires a V-bit with a valid included angle.
+
+**Bad practice — warnings:**
+
+- **DOC larger than the bit diameter** — heavy chip load, breakage risk.
+- **Plunge feed faster than cut feed** — plunging is the hardest move on a bit.
+- **O-flute-recommended materials** (Sintra, ACM, PVC foam, etc.) with a
+  multi-flute bit — generalises the HDPE/acrylic rule to any plastic the
+  material library tags for O-flute use.
+- **V-bit on a profile / drill / pocket op** — V-bits only cut at the flank.
+- **Chip load** outside the 0.05–0.30&nbsp;mm window.
+- **Tabs above 2&nbsp;mm** thick — will hold well but need flush-trim cleanup.
+- **Through-cut depth** is sanity-checked against material thickness and the
+  spoilboard overage (profile-out only — profile-in is rarely a through-cut).
+- **Stock margin smaller than the tool offset** on profile-out warns the
+  outside toolpath may run off the stock — with a one-click fix that's
+  suppressed when bumping the margin would push the part off the machine.
+- **Deep straight plunges** (per-plunge depth > 3× bit diameter, or 5 mm with
+  no bit info) suggest switching to peck or helical plunge.
+- **Spindle RPM far from the material recommendation** (info).
+
+**Informational:**
+
+- **M0 pauses are off by default** — they silently halt the program. Turning
+  them on raises an info banner.
+- **The machine envelope** is checked; if the job would fit rotated, a 90°
+  rotation is offered (re-check after rotating if you have a custom origin).
 - **Oversized drilled holes** (hole diameter ≤ bit diameter) raise a warning
   and are documented in the gcode header.
-- **Parametric-looking parts** trigger an info banner suggesting you regenerate
-  the SVG at the correct size rather than scaling it.
-- **Bitmap traces with very high node counts** warn that the cut will be
-  slow and suggest raising the simplify value.
+- **Non-circular small features** trigger a notice when drill is selected,
+  noting the auto-fallback to profile-in. Set a *target hole diameter* on the
+  Geometry tab to force a drill cycle anyway.
+- **Parametric-looking parts** suggest you regenerate the SVG at the correct
+  size rather than scaling it.
+- **Bitmap traces** above 30k nodes raise an info ("cut may be slower than
+  expected"); above 120k raises a warn ("preview and cut will be slow").
 - **Nominal plywood thickness** is flagged — measure your actual stock.
 
 ## The preview
@@ -358,8 +397,10 @@ tabs (red ✕) and the work origin (red crosshair at 0,0).
 Every generated file follows a fixed structure: a documented header, a safe
 preamble (`G21 G90 G94 G17`, spindle off, rapid to safe Z, optional M0 pause,
 `M3 S`), the operation body (drills first, profiles last, with a comment per
-operation) and a footer that parks the machine (`G0 Z`, `G0 X0 Y0`, `M5`,
-optional M0, `M30`).
+operation) and a footer that parks the machine — **spindle off (`M5`) before
+the rapid back to (0,0)**, then optional M0, then `M30`. The M5-before-park
+order means the spindle is never spinning during the return rapid, which
+matters if a VFD is wired (it's a no-op for the manual Makita).
 
 - **The header** records the job name, material, bit, operation, final depth and
   pass count, spindle RPM (with the matching Makita dial number), feeds, the
@@ -368,10 +409,11 @@ optional M0, `M30`).
 - **Air pass** — the modal can re-emit the whole job with every Z raised
   25&nbsp;mm so you can dry-run the toolpath above the stock before cutting.
 - **Filename** — built from a template (`{job}_{material}_{bit}_{date}.gcode` by
-  default); air-pass files are prefixed `AIRPASS_`.
+  default); air-pass files are prefixed `AIRPASS_`. Pathological patterns that
+  sanitise to empty fall back to `job.gcode`.
 - **Coordinates** are emitted with explicit per-segment feeds; full circles use
   `G2/G3` with `I/J` centre offsets. Non-finite coordinates can never reach the
-  file.
+  file (the emitter clamps and skips degenerate arcs defensively).
 
 From the modal you can **Copy** the gcode, **Download** the `.gcode` file, or
 **Save to server** to keep a copy in `data/jobs/`.
@@ -455,9 +497,13 @@ samples/                  Test SVGs (square, circle, holes plate, text)
   profile-in for the window — and the validator flags this when it sees nested
   contours.
 - `<text>` elements in uploaded SVGs are not rasterised; convert text to paths
-  before export, or use the built-in text generator.
+  before export, or use the built-in text generator. (The parser raises a
+  clear error if you forget.)
 - Arc *fitting* is not done — curves are emitted as tessellated polylines,
   except the drill-circle cycle, which uses true `G2`.
+- The shape library's `pillBorder` renders as an ellipse border (not a true
+  stadium with straight sides). A real stadium would need the shape API to
+  know the target width/height aspect — out of scope for v1.
 - There is no authentication; deploy the tool only on a trusted local network.
 
 See `spec.md` for the full design specification.
