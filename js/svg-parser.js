@@ -124,9 +124,11 @@
   }
   function mid(a, b) { return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }
 
-  /* Elliptical arc -> array of cubic-bezier control quadruples (user space). */
+  /* Elliptical arc -> array of cubic-bezier control quadruples (user space).
+     Per SVG spec: start == end means "no segment" (the arc is omitted). */
   function arcToBeziers(x1, y1, rx, ry, phi, largeArc, sweep, x2, y2) {
     if (rx === 0 || ry === 0) return [[x1, y1, x2, y2, x2, y2]];
+    if (Math.abs(x1 - x2) < 1e-9 && Math.abs(y1 - y2) < 1e-9) return [];
     rx = Math.abs(rx); ry = Math.abs(ry);
     var rad = phi * Math.PI / 180, cosP = Math.cos(rad), sinP = Math.sin(rad);
     var dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
@@ -186,7 +188,10 @@
     function flag() {
       ws();
       if (d[i] === '0' || d[i] === '1') { var f = d[i] === '1' ? 1 : 0; i++; return f; }
-      return num(); // tolerate non-conforming files
+      // Non-conforming flag — return null so the caller aborts the arc
+      // rather than misreading it as a number and desyncing the next 5
+      // arguments.
+      return null;
     }
     var counts = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7, Z: 0 };
     while (i < n) {
@@ -357,10 +362,43 @@
   var SKIP_AS_ROOT = { symbol: 1 };
   var SHAPES = { path: 1, rect: 1, circle: 1, ellipse: 1, line: 1, polyline: 1, polygon: 1 };
 
-  function isHidden(el) {
+  /** Collect classnames that resolve to display:none / visibility:hidden in
+      a <style> block. Handles the common Inkscape/Illustrator "hidden layer"
+      pattern: <style>.hidden{display:none}</style> + class="hidden". */
+  function collectHiddenClasses(root) {
+    var out = {};
+    var styles = root.getElementsByTagName ? root.getElementsByTagName('style') : null;
+    if (!styles) return out;
+    for (var i = 0; i < styles.length; i++) {
+      var text = styles[i].textContent || '';
+      // Strip /* comments */ first.
+      text = text.replace(/\/\*[\s\S]*?\*\//g, '');
+      // Match each rule with at least one .class selector and a hidden decl.
+      var re = /([^{}]+)\{([^}]*)\}/g, m;
+      while ((m = re.exec(text)) !== null) {
+        var sel = m[1], decls = m[2];
+        if (!/display\s*:\s*none/i.test(decls) &&
+            !/visibility\s*:\s*hidden/i.test(decls)) continue;
+        var cre = /\.([A-Za-z_][\w-]*)/g, c;
+        while ((c = cre.exec(sel)) !== null) out[c[1]] = true;
+      }
+    }
+    return out;
+  }
+
+  function isHidden(el, hiddenClasses) {
     var st = (el.getAttribute('style') || '');
     if (el.getAttribute('display') === 'none' || /display\s*:\s*none/.test(st)) return true;
     if (el.getAttribute('visibility') === 'hidden' || /visibility\s*:\s*hidden/.test(st)) return true;
+    if (hiddenClasses) {
+      var cls = el.getAttribute('class') || '';
+      if (cls) {
+        var parts = cls.split(/\s+/);
+        for (var k = 0; k < parts.length; k++) {
+          if (parts[k] && hiddenClasses[parts[k]]) return true;
+        }
+      }
+    }
     return false;
   }
 
@@ -402,10 +440,10 @@
     return Mat.mul(m, [sx, 0, 0, sy, -vb[0] * sx, -vb[1] * sy]);
   }
 
-  function walk(el, ctm, tol, out, root, depth, isUseTarget) {
+  function walk(el, ctm, tol, out, root, depth, isUseTarget, hiddenClasses) {
     if (depth > 40 || el.nodeType !== 1 || !el.tagName) return;
     var tag = el.tagName.toLowerCase();
-    if (SKIP[tag] || isHidden(el)) return;
+    if (SKIP[tag] || isHidden(el, hiddenClasses)) return;
     // <symbol> is skipped unless we entered it via <use>. <use> resolution
     // sets isUseTarget=true on the first call only — children of the symbol
     // are walked normally.
@@ -420,7 +458,7 @@
         var ref = findById(root, href.slice(1));
         if (ref && ref !== el) {
           walk(ref, Mat.mul(here, useTransform(el, ref)),
-               tol, out, root, depth + 1, true);
+               tol, out, root, depth + 1, true, hiddenClasses);
         }
       }
       return;
@@ -432,7 +470,7 @@
       for (var i = 0; i < subs.length; i++) out.push(subs[i]);
     }
     for (var c = el.firstChild; c; c = c.nextSibling) {
-      if (c.nodeType === 1) walk(c, here, tol, out, root, depth + 1, false);
+      if (c.nodeType === 1) walk(c, here, tol, out, root, depth + 1, false, hiddenClasses);
     }
   }
 
@@ -549,9 +587,10 @@
     })(svg);
 
     // --- walk ---
+    var hiddenClasses = collectHiddenClasses(svg);
     var raw = [];
     walk(svg, Mat.mul(root, parseTransform(svg.getAttribute('transform'))),
-         tol, raw, svg, 0, false);
+         tol, raw, svg, 0, false, hiddenClasses);
 
     // --- assemble subpaths ---
     var subpaths = [], all = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };

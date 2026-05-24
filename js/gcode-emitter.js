@@ -41,9 +41,12 @@
   /** Build an output filename from the templated pattern. */
   function buildFilename(pattern, tokens) {
     var name = applyTemplate(pattern || '{job}_{material}_{bit}_{date}.gcode', tokens);
-    name = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    name = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^[-.]+|-+$/g, '');
     if (!/\.gcode$/i.test(name)) name += '.gcode';
-    return name || 'job.gcode';
+    // After stripping, a pathological pattern (e.g. "!!!") could leave just
+    // ".gcode" — a hidden file on Unix. Fall through to the standard default.
+    if (!name || name === '.gcode') return 'job.gcode';
+    return name;
   }
 
   /** Human description of where the gcode origin sits, for the header. */

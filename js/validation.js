@@ -265,13 +265,25 @@
       }
     }
 
-    /* --- HDPE + multi-flute (gotcha 6) --- */
+    /* --- HDPE + multi-flute (gotcha 6) ---
+       HDPE is the catastrophic case (melts dangerously). Acrylic is the
+       chip-quality case. Anything the material library flags as preferring
+       an O-flute bit gets a generic warning — covers HDPE/acrylic/PVC under
+       custom names that the substring match would otherwise miss. */
     if (material && /hdpe/i.test(material.name || '') && bit && bit.flute_count > 1) {
       add('error', 'Multi-flute bits melt HDPE. Use a single-flute O-flute bit.');
     }
     if (material && /acrylic/i.test(material.name || '') && bit && bit.flute_count > 1) {
       add('warn', 'Acrylic cuts best with a single-flute O-flute bit — multi-flute ' +
         'bits tend to melt and chip it.');
+    }
+    if (material && bit && bit.flute_count > 1 &&
+        material.recommended_bit_type === 'O-flute' &&
+        !/hdpe/i.test(material.name || '') &&
+        !/acrylic/i.test(material.name || '')) {
+      add('warn', 'This material is tagged for an O-flute bit (chip-clearing for ' +
+        'plastics). Multi-flute bits may melt or chip it — use a single-flute ' +
+        'O-flute instead.');
     }
 
     /* --- through-cut depth vs material thickness (gotcha 4, 15) ---
@@ -354,9 +366,15 @@
     if (job && job.source && job.source.trace) {
       var t = job.source.trace;
       var nodes = t.nodesAfter || 0;
+      // 30 k is where preview/cut start to feel sluggish on modest hardware.
+      // 120 k is where the browser may stall outright — keep that as a hard
+      // error-style warning.
       if (nodes > 120000) {
-        add('warn', 'Bitmap trace generated ' + nodes + ' nodes. This may cut slowly. ' +
-          'Increase simplify (mm), raise min island area, or use a cleaner source image.');
+        add('warn', 'Bitmap trace generated ' + nodes + ' nodes — preview and cut ' +
+          'will be slow. Raise the Simplify (mm) value or use a cleaner source image.');
+      } else if (nodes > 30000) {
+        add('info', 'Bitmap trace generated ' + nodes + ' nodes — cut may be slower ' +
+          'than expected. Raising Simplify (mm) by 0.05 typically halves node count.');
       }
       if (nodes > 0 && t.nodesBefore && nodes / t.nodesBefore > 0.9) {
         add('info', 'Trace simplification is very light. If runtime is high, raise ' +

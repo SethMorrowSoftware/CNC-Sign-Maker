@@ -227,7 +227,11 @@
 
     function drawScaleBar() {
       var target = 90, mm = target / view.scale;
-      var pow = Math.pow(10, Math.floor(Math.log10(mm)));
+      if (!isFinite(mm) || mm <= 0) return;
+      // Clamp the log10 to sensible bounds — at extreme zoom, an unbounded
+      // pow would emit "2e+15 mm" or similar.
+      var lg = Math.max(-3, Math.min(7, Math.floor(Math.log10(mm))));
+      var pow = Math.pow(10, lg);
       var nice = [1, 2, 5, 10].map(function (n) { return n * pow; })
         .reduce(function (a, b) { return Math.abs(b - mm) < Math.abs(a - mm) ? b : a; });
       var px = nice * view.scale;
