@@ -23,9 +23,11 @@
 
   /** Format a coordinate: 3 decimals, trailing zeros trimmed, no "-0".
       A non-finite value is clamped to 0 so a stray NaN can never emit a
-      line the controller would reject. */
+      line the controller would reject. null/undefined also clamp to 0
+      explicitly — relying on isFinite(null)===true would silently emit a
+      0 where the caller meant "no value", which is unsafe near arcs. */
   function fmt(n) {
-    if (!isFinite(n)) return '0';
+    if (n == null || !isFinite(n)) return '0';
     var r = Math.round(n * 1000) / 1000;
     return String(r === 0 ? 0 : r);
   }
@@ -39,9 +41,12 @@
   /** Build an output filename from the templated pattern. */
   function buildFilename(pattern, tokens) {
     var name = applyTemplate(pattern || '{job}_{material}_{bit}_{date}.gcode', tokens);
-    name = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    name = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^[-.]+|-+$/g, '');
     if (!/\.gcode$/i.test(name)) name += '.gcode';
-    return name || 'job.gcode';
+    // After stripping, a pathological pattern (e.g. "!!!") could leave just
+    // ".gcode" — a hidden file on Unix. Fall through to the standard default.
+    if (!name || name === '.gcode') return 'job.gcode';
+    return name;
   }
 
   /** Human description of where the gcode origin sits, for the header. */
@@ -139,7 +144,9 @@
     // precision, so float noise can never emit a redundant axis word.
     var cx = null, cy = null, cz = null;
     function q(n) {
-      if (!isFinite(n)) return 0;   // last-ditch guard — never emit X/Y/ZNaN
+      // null/undefined also clamp to 0 — isFinite(null) is true, which would
+      // otherwise silently turn a missing axis into an emitted X0/Y0/Z0.
+      if (n == null || !isFinite(n)) return 0;
       var r = Math.round(n * 1000) / 1000;
       return r === 0 ? 0 : r;
     }
@@ -160,13 +167,25 @@
           var w = moveWords(m);
           if (w) L.push('G0' + w);
         } else if (m.t === 'arc') {
-          // endpoint must be stated explicitly for a full circle
-          var aw = ' X' + q(m.x) + ' Y' + q(m.y);
+          // endpoint must be stated explicitly for a full circle.
+          // x and y are required on an arc; if either is missing, skip —
+          // emitting (X0 Y0) on an arc would send the bit to the origin
+          // mid-circle, which is catastrophic. F falls back to s.feedCut
+          // so a missing m.f never produces "FNaN".
+          if (m.x == null || m.y == null ||
+              !isFinite(m.x) || !isFinite(m.y) ||
+              !isFinite(m.i) || !isFinite(m.j)) {
+            return;
+          }
+          var rx = q(m.x), ry = q(m.y);
+          var aw = ' X' + rx + ' Y' + ry;
           var rz = q(m.z + zOff);
           if (rz !== cz) { aw += ' Z' + rz; cz = rz; }
           aw += ' I' + fmt(m.i) + ' J' + fmt(m.j);
-          cx = q(m.x); cy = q(m.y);
-          L.push((m.ccw ? 'G3' : 'G2') + aw + ' F' + Math.round(m.f));
+          cx = rx; cy = ry;
+          var arcF = (m.f && isFinite(m.f) && m.f > 0) ? m.f
+                                                       : (s.feedCut || 1000);
+          L.push((m.ccw ? 'G3' : 'G2') + aw + ' F' + Math.round(arcF));
         } else { // plunge or cut
           var cw = moveWords(m);
           if (cw) L.push('G1' + cw + ' F' + Math.round(m.f || s.feedCut));
@@ -178,8 +197,12 @@
     /* ---- footer ---- */
     L.push('; --- footer ---');
     L.push('G0 Z' + fmt(safeZ));
-    L.push('G0 X0 Y0');
+    // Stop the spindle BEFORE the parking move. The bit is at safeZ above the
+    // stock, so dragging is unlikely, but if a future VFD is wired the spindle
+    // would otherwise still be on through the rapid back to (0,0) — and a
+    // mis-set safeZ would let it drag across the freshly cut part.
     L.push('M5     ; spindle off');
+    L.push('G0 X0 Y0');
     if (s.useM0) L.push('M0     ; PAUSE — switch the router OFF');
     L.push('M30    ; program end');
     L.push('');

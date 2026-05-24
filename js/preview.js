@@ -173,9 +173,23 @@
           if (m.t === 'cut') {
             line(toScreenX(cx), toScreenY(cy), toScreenX(nx), toScreenY(ny));
           } else if (m.t === 'arc') {
-            var ccx = cx + m.i, ccy = cy + m.j, r = Math.hypot(m.i, m.j) * view.scale;
+            // Draw the arc with the same geometry the gcode emits: centre at
+            // (cx+i, cy+j), going from (cx,cy) to (nx,ny) in the m.ccw
+            // direction. Endpoint == start = full circle.
+            var ccx = cx + m.i, ccy = cy + m.j;
+            var r = Math.hypot(m.i, m.j) * view.scale;
+            // Canvas Y is flipped (screen-down) relative to world Y-up. That
+            // flip reverses the arc direction the canvas sees, so we pass
+            // counterclockwise = !m.ccw to keep the visible direction correct.
+            var sa = Math.atan2(-(cy - ccy), cx - ccx);  // screen-Y is negated
+            var ea = Math.atan2(-(ny - ccy), nx - ccx);
+            var fullCircle = Math.abs(nx - cx) < 1e-6 && Math.abs(ny - cy) < 1e-6;
             ctx.beginPath();
-            ctx.arc(toScreenX(ccx), toScreenY(ccy), r, 0, 2 * Math.PI);
+            if (fullCircle) {
+              ctx.arc(toScreenX(ccx), toScreenY(ccy), r, 0, 2 * Math.PI);
+            } else {
+              ctx.arc(toScreenX(ccx), toScreenY(ccy), r, sa, ea, !m.ccw);
+            }
             ctx.stroke();
           }
           cx = nx; cy = ny;
@@ -213,7 +227,11 @@
 
     function drawScaleBar() {
       var target = 90, mm = target / view.scale;
-      var pow = Math.pow(10, Math.floor(Math.log10(mm)));
+      if (!isFinite(mm) || mm <= 0) return;
+      // Clamp the log10 to sensible bounds — at extreme zoom, an unbounded
+      // pow would emit "2e+15 mm" or similar.
+      var lg = Math.max(-3, Math.min(7, Math.floor(Math.log10(mm))));
+      var pow = Math.pow(10, lg);
       var nice = [1, 2, 5, 10].map(function (n) { return n * pow; })
         .reduce(function (a, b) { return Math.abs(b - mm) < Math.abs(a - mm) ? b : a; });
       var px = nice * view.scale;
@@ -331,6 +349,14 @@
       tip.style.display = 'none';
     });
     window.addEventListener('resize', function () { resize(); render(); });
+    // Catch layout-only changes (sidebar toggles, devicePixelRatio swap when
+    // dragged between monitors) — window 'resize' alone misses those.
+    if (typeof ResizeObserver !== 'undefined') {
+      try {
+        var ro = new ResizeObserver(function () { resize(); render(); });
+        ro.observe(canvas.parentNode || canvas);
+      } catch (e) { /* old browser: fall back to window.resize */ }
+    }
 
     return {
       get options() { return options; },

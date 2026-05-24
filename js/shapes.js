@@ -16,6 +16,66 @@
       'L' + round(x + w) + ',' + round(y + h) + 'L' + round(x) + ',' + round(y + h) + 'Z';
   }
 
+  /** Stretch a vertex list so its axis-aligned bbox is exactly (0,0)-(1,1).
+      Used to keep declared shape dimensions honest — e.g. pentagon was 95% x 90%
+      of its declared bbox before normalization. */
+  function normalizeToBbox(pts) {
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      if (pts[i][0] < minX) minX = pts[i][0];
+      if (pts[i][0] > maxX) maxX = pts[i][0];
+      if (pts[i][1] < minY) minY = pts[i][1];
+      if (pts[i][1] > maxY) maxY = pts[i][1];
+    }
+    var rw = maxX - minX, rh = maxY - minY;
+    if (rw < 1e-9 || rh < 1e-9) return pts.slice();
+    var out = new Array(pts.length);
+    for (var j = 0; j < pts.length; j++) {
+      out[j] = [(pts[j][0] - minX) / rw, (pts[j][1] - minY) / rh];
+    }
+    return out;
+  }
+
+  /** Offset a closed polygon inward by `t` in normalized units. Each edge is
+      translated perpendicular to itself; consecutive offset lines are
+      intersected to find the inner vertices. Returns the inner contour with
+      the same winding as the input. Used for border shapes that previously
+      offset the X and Y axes independently — producing non-uniform wall
+      thickness on diagonal edges. */
+  function offsetPolygonInward(poly, t) {
+    var n = poly.length;
+    if (n < 3) return [];
+    var cx = 0, cy = 0;
+    for (var i = 0; i < n; i++) { cx += poly[i][0]; cy += poly[i][1]; }
+    cx /= n; cy /= n;
+    var lines = [];
+    for (var k = 0; k < n; k++) {
+      var p1 = poly[k], p2 = poly[(k + 1) % n];
+      var dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+      var len = Math.hypot(dx, dy);
+      if (len < 1e-9) continue;
+      var nx = -dy / len, ny = dx / len;
+      var mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2;
+      if (nx * (cx - mx) + ny * (cy - my) < 0) { nx = -nx; ny = -ny; }
+      lines.push({
+        a: [p1[0] + t * nx, p1[1] + t * ny],
+        b: [p2[0] + t * nx, p2[1] + t * ny]
+      });
+    }
+    if (!lines.length) return [];
+    var inner = [];
+    for (var li = 0; li < lines.length; li++) {
+      var L1 = lines[li], L2 = lines[(li + 1) % lines.length];
+      var x1 = L1.a[0], y1 = L1.a[1], x2 = L1.b[0], y2 = L1.b[1];
+      var x3 = L2.a[0], y3 = L2.a[1], x4 = L2.b[0], y4 = L2.b[1];
+      var den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+      if (Math.abs(den) < 1e-9) { inner.push([x2, y2]); continue; }
+      var u = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+      inner.push([x1 + u * (x2 - x1), y1 + u * (y2 - y1)]);
+    }
+    return inner;
+  }
+
   var SHAPES = {
     rectangle: { label: 'Rectangle', params: [], path: function () { return ['M0,0L1,0L1,1L0,1Z']; } },
     roundedRect: {
@@ -33,7 +93,15 @@
       params: [{ key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.45, def: 0.12, step: 0.01, unit: 'ratio' }],
       path: function (params) {
         var t = clamp(params.thickness == null ? 0.12 : params.thickness, 0.03, 0.45);
-        return [rectPath(0, 0, 1, 1), rectPath(t, t, 1 - 2 * t, 1 - 2 * t)];
+        var x = t, y = t, w = 1 - 2 * t, h = 1 - 2 * t;
+        // Inner rectangle traversed in REVERSE order so its winding is
+        // opposite the outer — produces a proper annulus under any
+        // winding-aware fill rule. Even-odd pocketing works either way.
+        var innerRev = 'M' + round(x) + ',' + round(y) +
+          'L' + round(x) + ',' + round(y + h) +
+          'L' + round(x + w) + ',' + round(y + h) +
+          'L' + round(x + w) + ',' + round(y) + 'Z';
+        return [rectPath(0, 0, 1, 1), innerRev];
       }
     },
     roundedBorderRect: {
@@ -49,14 +117,17 @@
         var innerH = 1 - 2 * t;
         if (innerW <= 0.01 || innerH <= 0.01) return [];
         var rInner = clamp(rOuter - t, 0.01, Math.min(innerW, innerH) * 0.5 - 0.005);
+        // Outer: CW with sweep=1. Inner: CCW with sweep=0, so the annulus is
+        // properly hole-wound under any winding-aware fill rule.
         return [
           'M' + rOuter + ',0L' + (1 - rOuter) + ',0A' + rOuter + ',' + rOuter + ' 0 0 1 1,' + rOuter +
             'L1,' + (1 - rOuter) + 'A' + rOuter + ',' + rOuter + ' 0 0 1 ' + (1 - rOuter) + ',1L' + rOuter + ',1A' + rOuter + ',' + rOuter +
             ' 0 0 1 0,' + (1 - rOuter) + 'L0,' + rOuter + 'A' + rOuter + ',' + rOuter + ' 0 0 1 ' + rOuter + ',0Z',
-          'M' + (t + rInner) + ',' + t + 'L' + (1 - t - rInner) + ',' + t + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + (1 - t) + ',' + (t + rInner) +
-            'L' + (1 - t) + ',' + (1 - t - rInner) + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + (1 - t - rInner) + ',' + (1 - t) +
-            'L' + (t + rInner) + ',' + (1 - t) + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + t + ',' + (1 - t - rInner) +
-            'L' + t + ',' + (t + rInner) + 'A' + rInner + ',' + rInner + ' 0 0 1 ' + (t + rInner) + ',' + t + 'Z'
+          'M' + (t + rInner) + ',' + t + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + t + ',' + (t + rInner) +
+            'L' + t + ',' + (1 - t - rInner) + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + (t + rInner) + ',' + (1 - t) +
+            'L' + (1 - t - rInner) + ',' + (1 - t) + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + (1 - t) + ',' + (1 - t - rInner) +
+            'L' + (1 - t) + ',' + (t + rInner) + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + (1 - t - rInner) + ',' + t +
+            'L' + (t + rInner) + ',' + t + 'Z'
         ];
       }
     },
@@ -93,31 +164,36 @@
       path: function (params) {
         var inset = clamp(params.inset == null ? 0.25 : params.inset, 0.1, 0.45);
         var t = clamp(params.thickness == null ? 0.1 : params.thickness, 0.03, 0.24);
-        var innerInset = clamp(inset + t, 0.12, 0.49);
-        var yTop = t;
-        var yBot = 1 - t;
-        var rightX = 1 - t;
-        var leftX = t;
-        return [
-          polygonPath([[inset, 0], [1 - inset, 0], [1, 0.5], [1 - inset, 1], [inset, 1], [0, 0.5]]),
-          polygonPath([[innerInset, yTop], [1 - innerInset, yTop], [rightX, 0.5], [1 - innerInset, yBot], [innerInset, yBot], [leftX, 0.5]])
-        ];
+        var outer = [[inset, 0], [1 - inset, 0], [1, 0.5], [1 - inset, 1], [inset, 1], [0, 0.5]];
+        // Geometric inward offset so wall thickness is uniform around the
+        // ring (the old X/Y inset approach produced visibly thicker diagonal
+        // walls than horizontals).
+        var inner = offsetPolygonInward(outer, t);
+        if (inner.length < 3) return [polygonPath(outer)];
+        // Reverse the inner contour so the annulus is properly hole-wound.
+        inner.reverse();
+        return [polygonPath(outer), polygonPath(inner)];
       }
     },
     pillBorder: {
       label: 'Pill border',
       params: [{ key: 'thickness', label: 'Border thickness', min: 0.03, max: 0.24, def: 0.1, step: 0.01, unit: 'ratio' }],
+      // The shape library works in a unit (0..1) box that is later stretched
+      // to (w, h). In that unit box, a "pill" with caps of radius 0.5 has
+      // both caps meeting at the centre, i.e. it is a circle. After the (w,
+      // h) scale, the rendered result is an ellipse — visually identical to
+      // ellipseBorder. A true stadium with visible straight sides would need
+      // the path generator to know the target w/h aspect, which the current
+      // shape API does not pass. Kept as a separate entry for UI clarity and
+      // backward-compat with existing presets. Inner arc uses sweep=0 so the
+      // annulus is properly hole-wound.
       path: function (params) {
         var t = clamp(params.thickness == null ? 0.1 : params.thickness, 0.03, 0.24);
-        var rOuter = 0.5;
-        var rInner = clamp(rOuter - t, 0.08, 0.47);
-        var xLeft = 0;
-        var xRight = 1;
-        var xLeftInner = t;
-        var xRightInner = 1 - t;
+        var rIn = clamp(0.5 - t, 0.08, 0.47);
         return [
-          'M0.5,0L0.5,0A' + rOuter + ',' + rOuter + ' 0 0 1 ' + xRight + ',0.5A' + rOuter + ',' + rOuter + ' 0 0 1 0.5,1A' + rOuter + ',' + rOuter + ' 0 0 1 ' + xLeft + ',0.5A' + rOuter + ',' + rOuter + ' 0 0 1 0.5,0Z',
-          'M0.5,' + t + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + xLeftInner + ',0.5A' + rInner + ',' + rInner + ' 0 0 0 0.5,' + (1 - t) + 'A' + rInner + ',' + rInner + ' 0 0 0 ' + xRightInner + ',0.5A' + rInner + ',' + rInner + ' 0 0 0 0.5,' + t + 'Z'
+          'M0.5,0A0.5,0.5 0 1 1 0.5,1A0.5,0.5 0 1 1 0.5,0Z',
+          'M0.5,' + t + 'A' + rIn + ',' + rIn + ' 0 1 0 0.5,' + (1 - t) +
+            'A' + rIn + ',' + rIn + ' 0 1 0 0.5,' + t + 'Z'
         ];
       }
     },
@@ -155,7 +231,9 @@
         var sr = clamp(params.shaftRatio == null ? 0.35 : params.shaftRatio, 0.1, 0.9);
         var y0 = (1 - sr) / 2;
         var y1 = y0 + sr;
-        return [polygonPath([[1, y0], [hr, y0], [hr, 0], [0, 0.5], [hr, 1], [hr, y1], [1, y1]])];
+        // Order chosen so the winding matches arrow (right) and every other
+        // outer shape — useful if any future code relies on CW-outer.
+        return [polygonPath([[1, y1], [hr, y1], [hr, 1], [0, 0.5], [hr, 0], [hr, y0], [1, y0]])];
       }
     },
     diamond: { label: 'Diamond', params: [], path: function () { return [polygonPath([[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]])]; } },
@@ -171,7 +249,9 @@
           var r = (i % 2 === 0) ? 0.5 : 0.5 * inner;
           pts.push([0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r]);
         }
-        return [polygonPath(pts)];
+        // Stars only fill the unit bbox for n in {4, 8, 12}. Stretch so any
+        // configuration fills its declared dimensions.
+        return [polygonPath(normalizeToBbox(pts))];
       }
     },
     triangle: { label: 'Triangle', params: [],
@@ -183,7 +263,9 @@
           var a = -Math.PI / 2 + i * 2 * Math.PI / 5;
           pts.push([0.5 + Math.cos(a) * 0.5, 0.5 + Math.sin(a) * 0.5]);
         }
-        return [polygonPath(pts)];
+        // Regular pentagon inscribed in a unit circle only fills ~95% x 90%
+        // of the unit bbox; stretch so width/height honour the declared dims.
+        return [polygonPath(normalizeToBbox(pts))];
       } },
     octagon: { label: 'Octagon',
       params: [{ key: 'inset', label: 'Corner inset', min: 0.1, max: 0.45, def: 0.3, step: 0.01, unit: 'ratio' }],
@@ -239,11 +321,20 @@
             pts.push([0.5 + Math.cos(ang) * q[1], 0.5 + Math.sin(ang) * q[1]]);
           });
         }
-        return [polygonPath(pts), 'M0.5,0.35A0.15,0.15 0 1 1 0.5,0.65A0.15,0.15 0 1 1 0.5,0.35Z'];
+        // Tooth tips don't quite reach the bbox edges — normalize the outer
+        // contour so a gear sized 100x100 really fills 100x100. Bore stays
+        // centered at the (still-symmetric) normalized centre.
+        // Bore drawn with sweep=0 so its winding is opposite the outer gear
+        // (CW) — proper hole annulus under any winding-aware fill rule.
+        return [polygonPath(normalizeToBbox(pts)),
+                'M0.5,0.35A0.15,0.15 0 1 0 0.5,0.65A0.15,0.15 0 1 0 0.5,0.35Z'];
       } },
     lightning: { label: 'Lightning bolt', params: [],
       path: function () {
-        return [polygonPath([[0.6, 0], [0.1, 0.55], [0.45, 0.55], [0.3, 1], [0.9, 0.42], [0.5, 0.42], [0.78, 0]])];
+        // Reordered so winding is CW like every other outer shape, and
+        // normalized so it actually fills the declared bbox (was 0.8 x 1.0).
+        var pts = [[0.78, 0], [0.5, 0.42], [0.9, 0.42], [0.3, 1], [0.45, 0.55], [0.1, 0.55], [0.6, 0]];
+        return [polygonPath(normalizeToBbox(pts))];
       } }
 
   };

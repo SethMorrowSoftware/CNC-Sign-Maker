@@ -119,6 +119,10 @@
       case 'top-left': return { x: p.x, y: p.y };
       case 'top-center': return { x: p.x - w / 2, y: p.y };
       case 'top-right': return { x: p.x - w, y: p.y };
+      case 'mid-left':
+      case 'center-left': return { x: p.x, y: p.y - h / 2 };
+      case 'mid-right':
+      case 'center-right': return { x: p.x - w, y: p.y - h / 2 };
       case 'bottom-left': return { x: p.x, y: p.y - h };
       case 'bottom-center': return { x: p.x - w / 2, y: p.y - h };
       case 'bottom-right': return { x: p.x - w, y: p.y - h };
@@ -134,14 +138,21 @@
     if (!paths || !paths.length) return '';
     var w = Math.max(0.1, g.width || 30);
     var h = Math.max(0.1, g.height || 30);
-    var a = anchorPoint(g.anchor, ix, iy, iW, iH);
-    var x = a.x + (g.offsetX || 0);
-    var y = a.y + (g.offsetY || 0);
+    // Use anchoredPosition to put the bbox CORNER/EDGE at the anchor, matching
+    // how text is anchored — selecting "top-left" puts the shape's top-left at
+    // the usable-area top-left, not the shape's center.
+    var base = anchoredPosition(g.anchor, ix, iy, iW, iH, w, h);
+    // Rotation is about the shape's center.
+    var cx = base.x + w / 2 + (g.offsetX || 0);
+    var cy = base.y + h / 2 + (g.offsetY || 0);
     var sx = g.flipH ? -w : w;
     var sy = g.flipV ? -h : h;
     var rot = g.rotation || 0;
     var d = paths.map(function (p) { return '<path d="' + p + '"/>'; }).join('');
-    return '<g transform="translate(' + round(x) + ',' + round(y) + ') rotate(' + round(rot) + ') scale(' + round(sx) + ',' + round(sy) + ') translate(-0.5,-0.5)">' + d + '</g>';
+    return '<g transform="translate(' + round(cx) + ',' + round(cy) +
+      ') rotate(' + round(rot) +
+      ') scale(' + round(sx) + ',' + round(sy) +
+      ') translate(-0.5,-0.5)">' + d + '</g>';
   }
 
   /* ---- build --------------------------------------------------------- */

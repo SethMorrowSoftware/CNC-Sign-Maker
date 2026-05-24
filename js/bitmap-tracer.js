@@ -127,4 +127,6 @@
   }
 
   Forge.BitmapTracer = { traceImageBitmap: traceImageBitmap, traceImageData: traceImageData };
-})(window.Forge = window.Forge || {});
+})(typeof window !== 'undefined' ? (window.Forge = window.Forge || {})
+                                 : (typeof self !== 'undefined' ? (self.Forge = self.Forge || {})
+                                                                : (this.Forge = this.Forge || {})));

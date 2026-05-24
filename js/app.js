@@ -354,7 +354,10 @@
     }
     try {
       state.job = Forge.toolpath.prepareJob(state.geometry, s);
-      state.toolpath = Forge.toolpath.build(state.job, s, state.bit);
+      // Pass material so toolpath.build can anchor the tab Z to the material
+      // bottom on through-cuts (without it we'd silently produce tabs thinner
+      // than the user set, because of the spoilboard-overage offset).
+      state.toolpath = Forge.toolpath.build(state.job, s, state.bit, state.material);
       state.validation = Forge.validation.run(
         state.job, state.toolpath, s, state.bit, state.material);
     } catch (e) {
@@ -451,6 +454,7 @@
         if (!best) return null;
         best.startX = p.worldX;
         best.startY = p.worldY;
+        var clampedToastShown = false;  // once per drag, not per pixel
         return {
           capture: true,
           onMove: function (m) {
@@ -460,8 +464,9 @@
             var rawY = best.baseY - dy;
             var nextX = Math.max(best.minOffsetX, Math.min(best.maxOffsetX, rawX));
             var nextY = Math.max(best.minOffsetY, Math.min(best.maxOffsetY, rawY));
-            if (nextX !== rawX || nextY !== rawY) {
+            if ((nextX !== rawX || nextY !== rawY) && !clampedToastShown) {
               toast('Cannot move outside the usable sign area. Sign size is locked.', 'error');
+              clampedToastShown = true;
             }
             if (best.type === 'text') {
               state.settings.textOffsetX = nextX;

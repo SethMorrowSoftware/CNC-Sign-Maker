@@ -56,13 +56,16 @@
     return m;
   }
 
-  /* Convert an SVG length string to millimetres (unitless == CSS px). */
+  /* Convert an SVG length string to millimetres (unitless == CSS px).
+     Unit suffix is matched case-insensitively — some tools emit "100MM"
+     or "5IN" and silently failing the match would treat the file as
+     unitless. */
   function lengthToMm(str) {
     if (str == null) return null;
-    var m = /^\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*([a-z%]*)\s*$/.exec(String(str));
+    var m = /^\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*([a-zA-Z%]*)\s*$/.exec(String(str));
     if (!m) return null;
     var v = parseFloat(m[1]);
-    switch (m[2]) {
+    switch (m[2].toLowerCase()) {
       case 'mm': return v;
       case 'cm': return v * 10;
       case 'in': return v * 25.4;
@@ -77,7 +80,7 @@
      Unitless or px values depend on the 96-dpi assumption and warrant a notice. */
   function hasPhysicalUnit(str) {
     if (str == null) return false;
-    var m = /([a-z%]+)\s*$/i.exec(String(str).trim());
+    var m = /([a-zA-Z%]+)\s*$/.exec(String(str).trim());
     return !!m && /^(mm|cm|in|pt|pc)$/i.test(m[1]);
   }
 
@@ -87,9 +90,30 @@
     if (depth > 24) { out.push(p3); return; }
     // flatness: max control-point deviation from the chord
     var dx = p3[0] - p0[0], dy = p3[1] - p0[1];
+    var chord2 = dx * dx + dy * dy;
+    // Degenerate cubic — endpoints coincide. Without this guard, a self-
+    // returning cubic (legal SVG, common in stylised blobs) keeps failing
+    // the flatness check `0 < 0` and recurses to depth 24, producing ~33M
+    // points and hanging the browser. Use absolute distance from p0 to the
+    // control points as the deviation measure instead.
+    if (chord2 < 1e-12) {
+      var d1a = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+      var d2a = Math.hypot(p2[0] - p0[0], p2[1] - p0[1]);
+      if (d1a < tol && d2a < tol) {
+        out.push(p3);
+        return;
+      }
+      // Real loop curve with coincident endpoints — split and recurse.
+      var p01z = mid(p0, p1), p12z = mid(p1, p2), p23z = mid(p2, p3);
+      var p012z = mid(p01z, p12z), p123z = mid(p12z, p23z);
+      var mz = mid(p012z, p123z);
+      flattenCubic(p0, p01z, p012z, mz, tol, out, depth + 1);
+      flattenCubic(mz, p123z, p23z, p3, tol, out, depth + 1);
+      return;
+    }
     var d1 = Math.abs((p1[0] - p3[0]) * dy - (p1[1] - p3[1]) * dx);
     var d2 = Math.abs((p2[0] - p3[0]) * dy - (p2[1] - p3[1]) * dx);
-    if ((d1 + d2) * (d1 + d2) < tol * tol * (dx * dx + dy * dy)) {
+    if ((d1 + d2) * (d1 + d2) < tol * tol * chord2) {
       out.push(p3);
       return;
     }
@@ -100,9 +124,11 @@
   }
   function mid(a, b) { return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }
 
-  /* Elliptical arc -> array of cubic-bezier control quadruples (user space). */
+  /* Elliptical arc -> array of cubic-bezier control quadruples (user space).
+     Per SVG spec: start == end means "no segment" (the arc is omitted). */
   function arcToBeziers(x1, y1, rx, ry, phi, largeArc, sweep, x2, y2) {
     if (rx === 0 || ry === 0) return [[x1, y1, x2, y2, x2, y2]];
+    if (Math.abs(x1 - x2) < 1e-9 && Math.abs(y1 - y2) < 1e-9) return [];
     rx = Math.abs(rx); ry = Math.abs(ry);
     var rad = phi * Math.PI / 180, cosP = Math.cos(rad), sinP = Math.sin(rad);
     var dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
@@ -162,7 +188,10 @@
     function flag() {
       ws();
       if (d[i] === '0' || d[i] === '1') { var f = d[i] === '1' ? 1 : 0; i++; return f; }
-      return num(); // tolerate non-conforming files
+      // Non-conforming flag — return null so the caller aborts the arc
+      // rather than misreading it as a number and desyncing the next 5
+      // arguments.
+      return null;
     }
     var counts = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7, Z: 0 };
     while (i < n) {
@@ -281,10 +310,17 @@
       var x = num(el, 'x'), y = num(el, 'y'), w = num(el, 'width'), h = num(el, 'height');
       if (w <= 0 || h <= 0) return [];
       var rx = parseFloat(el.getAttribute('rx')), ry = parseFloat(el.getAttribute('ry'));
+      // Per SVG spec, negative rx/ry are invalid and treated as absent.
+      if (isNaN(rx) || rx < 0) rx = NaN;
+      if (isNaN(ry) || ry < 0) ry = NaN;
       if (isNaN(rx) && isNaN(ry)) {
         return [{ points: [tp(x, y), tp(x + w, y), tp(x + w, y + h), tp(x, y + h)], closed: true }];
       }
       rx = isNaN(rx) ? ry : rx; ry = isNaN(ry) ? rx : ry;
+      // Zero or near-zero corner radius — emit the simple rectangle.
+      if (rx < 1e-6 && ry < 1e-6) {
+        return [{ points: [tp(x, y), tp(x + w, y), tp(x + w, y + h), tp(x, y + h)], closed: true }];
+      }
       rx = Math.min(rx, w / 2); ry = Math.min(ry, h / 2);
       var d = 'M' + (x + rx) + ',' + y +
         'H' + (x + w - rx) + 'A' + rx + ',' + ry + ' 0 0 1 ' + (x + w) + ',' + (y + ry) +
@@ -320,13 +356,49 @@
 
   /* ---- DOM walk ------------------------------------------------------- */
 
-  var SKIP = { defs: 1, clippath: 1, mask: 1, symbol: 1, metadata: 1, title: 1, desc: 1 };
+  // <symbol> is normally skipped (only realised via <use>), but the walker
+  // accepts it as a root when entered through <use> — see walk()/isUseTarget.
+  var SKIP = { defs: 1, clippath: 1, mask: 1, metadata: 1, title: 1, desc: 1, style: 1 };
+  var SKIP_AS_ROOT = { symbol: 1 };
   var SHAPES = { path: 1, rect: 1, circle: 1, ellipse: 1, line: 1, polyline: 1, polygon: 1 };
 
-  function isHidden(el) {
+  /** Collect classnames that resolve to display:none / visibility:hidden in
+      a <style> block. Handles the common Inkscape/Illustrator "hidden layer"
+      pattern: <style>.hidden{display:none}</style> + class="hidden". */
+  function collectHiddenClasses(root) {
+    var out = {};
+    var styles = root.getElementsByTagName ? root.getElementsByTagName('style') : null;
+    if (!styles) return out;
+    for (var i = 0; i < styles.length; i++) {
+      var text = styles[i].textContent || '';
+      // Strip /* comments */ first.
+      text = text.replace(/\/\*[\s\S]*?\*\//g, '');
+      // Match each rule with at least one .class selector and a hidden decl.
+      var re = /([^{}]+)\{([^}]*)\}/g, m;
+      while ((m = re.exec(text)) !== null) {
+        var sel = m[1], decls = m[2];
+        if (!/display\s*:\s*none/i.test(decls) &&
+            !/visibility\s*:\s*hidden/i.test(decls)) continue;
+        var cre = /\.([A-Za-z_][\w-]*)/g, c;
+        while ((c = cre.exec(sel)) !== null) out[c[1]] = true;
+      }
+    }
+    return out;
+  }
+
+  function isHidden(el, hiddenClasses) {
     var st = (el.getAttribute('style') || '');
     if (el.getAttribute('display') === 'none' || /display\s*:\s*none/.test(st)) return true;
     if (el.getAttribute('visibility') === 'hidden' || /visibility\s*:\s*hidden/.test(st)) return true;
+    if (hiddenClasses) {
+      var cls = el.getAttribute('class') || '';
+      if (cls) {
+        var parts = cls.split(/\s+/);
+        for (var k = 0; k < parts.length; k++) {
+          if (parts[k] && hiddenClasses[parts[k]]) return true;
+        }
+      }
+    }
     return false;
   }
 
@@ -344,10 +416,38 @@
     return null;
   }
 
-  function walk(el, ctm, tol, out, root, depth) {
+  /** Compute the transform a <use> applies when it instantiates a
+      <symbol> or <svg> — translate by (x, y), then if the target has a
+      viewBox and the <use> has width/height, scale uniformly so the
+      viewBox fits the use's size. */
+  function useTransform(useEl, target) {
+    var ux = num(useEl, 'x'), uy = num(useEl, 'y');
+    var m = [1, 0, 0, 1, ux, uy];
+    var targetTag = (target.tagName || '').toLowerCase();
+    if (targetTag !== 'symbol' && targetTag !== 'svg') return m;
+    var vbStr = target.getAttribute('viewBox') || '';
+    var vb = vbStr.split(/[\s,]+/).map(parseFloat).filter(function (v) { return !isNaN(v); });
+    if (vb.length !== 4 || !(vb[2] > 0) || !(vb[3] > 0)) return m;
+    var wAttr = useEl.getAttribute('width'), hAttr = useEl.getAttribute('height');
+    var w = wAttr != null && wAttr !== '' ? parseFloat(wAttr) : null;
+    var h = hAttr != null && hAttr !== '' ? parseFloat(hAttr) : null;
+    if (w == null && h == null) return m;
+    if (w == null) w = vb[2] * (h / vb[3]);
+    if (h == null) h = vb[3] * (w / vb[2]);
+    if (!(w > 0) || !(h > 0)) return m;
+    // viewBox -> use box: scale then translate to align the viewBox origin
+    var sx = w / vb[2], sy = h / vb[3];
+    return Mat.mul(m, [sx, 0, 0, sy, -vb[0] * sx, -vb[1] * sy]);
+  }
+
+  function walk(el, ctm, tol, out, root, depth, isUseTarget, hiddenClasses) {
     if (depth > 40 || el.nodeType !== 1 || !el.tagName) return;
     var tag = el.tagName.toLowerCase();
-    if (SKIP[tag] || isHidden(el)) return;
+    if (SKIP[tag] || isHidden(el, hiddenClasses)) return;
+    // <symbol> is skipped unless we entered it via <use>. <use> resolution
+    // sets isUseTarget=true on the first call only — children of the symbol
+    // are walked normally.
+    if (SKIP_AS_ROOT[tag] && !isUseTarget) return;
 
     var local = parseTransform(el.getAttribute('transform'));
     var here = Mat.mul(ctm, local);
@@ -357,8 +457,8 @@
       if (href.charAt(0) === '#') {
         var ref = findById(root, href.slice(1));
         if (ref && ref !== el) {
-          var ux = num(el, 'x'), uy = num(el, 'y');
-          walk(ref, Mat.mul(here, [1, 0, 0, 1, ux, uy]), tol, out, root, depth + 1);
+          walk(ref, Mat.mul(here, useTransform(el, ref)),
+               tol, out, root, depth + 1, true, hiddenClasses);
         }
       }
       return;
@@ -370,7 +470,7 @@
       for (var i = 0; i < subs.length; i++) out.push(subs[i]);
     }
     for (var c = el.firstChild; c; c = c.nextSibling) {
-      if (c.nodeType === 1) walk(c, here, tol, out, root, depth + 1);
+      if (c.nodeType === 1) walk(c, here, tol, out, root, depth + 1, false, hiddenClasses);
     }
   }
 
@@ -439,8 +539,36 @@
     if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) {
       var vpW = wMm != null ? wMm : vb[2] * 25.4 / 96;
       var vpH = hMm != null ? hMm : vb[3] * 25.4 / 96;
-      var sx = vpW / vb[2], sy = vpH / vb[3];
-      root = [sx, 0, 0, sy, -vb[0] * sx, -vb[1] * sy];
+      var sxRaw = vpW / vb[2], syRaw = vpH / vb[3];
+      // Honor preserveAspectRatio (default "xMidYMid meet" — uniform scale,
+      // centered). Independent X/Y scales would stretch parts whenever the
+      // viewport aspect ratio differs from the viewBox aspect — cutting
+      // physically wrong-sized parts.
+      var par = (svg.getAttribute('preserveAspectRatio') || 'xMidYMid meet').trim();
+      var parTokens = par.split(/\s+/);
+      var align = parTokens[0] || 'xMidYMid';
+      var meetOrSlice = (parTokens[1] || 'meet').toLowerCase();
+      var sx, sy, tx0, ty0;
+      if (align.toLowerCase() === 'none') {
+        // explicit "none" — non-uniform scale (the previous behaviour)
+        sx = sxRaw; sy = syRaw;
+        tx0 = -vb[0] * sx; ty0 = -vb[1] * sy;
+      } else {
+        // uniform scale — choose the smaller (meet) or larger (slice) of the two
+        var uniform = meetOrSlice === 'slice'
+          ? Math.max(sxRaw, syRaw)
+          : Math.min(sxRaw, syRaw);
+        sx = uniform; sy = uniform;
+        // Aspect-correction offsets so the viewBox is centered/aligned in
+        // the viewport per the alignment token.
+        var slackX = vpW - vb[2] * uniform;
+        var slackY = vpH - vb[3] * uniform;
+        var fx = /xMin/i.test(align) ? 0 : /xMax/i.test(align) ? 1 : 0.5;
+        var fy = /YMin/.test(align) ? 0 : /YMax/.test(align) ? 1 : 0.5;
+        tx0 = -vb[0] * sx + slackX * fx;
+        ty0 = -vb[1] * sy + slackY * fy;
+      }
+      root = [sx, 0, 0, sy, tx0, ty0];
       docW = vpW; docH = vpH;
     } else {
       var k = 25.4 / 96; // 1 user unit == 1 CSS px
@@ -448,9 +576,21 @@
       docW = wMm; docH = hMm;
     }
 
+    // <text> warning — README documents that text isn't rasterised.
+    var textCount = 0;
+    (function scan(n) {
+      if (n.nodeType === 1 && n.tagName) {
+        var t = n.tagName.toLowerCase();
+        if (t === 'text' || t === 'tspan') textCount++;
+      }
+      for (var c = n.firstChild; c; c = c.nextSibling) scan(c);
+    })(svg);
+
     // --- walk ---
+    var hiddenClasses = collectHiddenClasses(svg);
     var raw = [];
-    walk(svg, Mat.mul(root, parseTransform(svg.getAttribute('transform'))), tol, raw, svg, 0);
+    walk(svg, Mat.mul(root, parseTransform(svg.getAttribute('transform'))),
+         tol, raw, svg, 0, false, hiddenClasses);
 
     // --- assemble subpaths ---
     var subpaths = [], all = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
@@ -458,6 +598,16 @@
       var pts = dedupe(raw[i].points, raw[i].closed);
       if (pts.length < 2) continue;
       var closed = raw[i].closed && pts.length >= 3;
+      // Promote open paths that visually close (last vertex within a small
+      // tolerance of the first) to closed — many exporters omit the Z
+      // command for hand-built paths.
+      if (!closed && pts.length >= 4) {
+        var f = pts[0], l = pts[pts.length - 1];
+        if (Math.abs(f[0] - l[0]) < 0.01 && Math.abs(f[1] - l[1]) < 0.01) {
+          closed = true;
+          pts = pts.slice(0, -1);
+        }
+      }
       var sa = closed ? signedArea(pts) : 0;
       var bb = bboxOf(pts);
       all.minX = Math.min(all.minX, bb.minX); all.minY = Math.min(all.minY, bb.minY);
@@ -472,7 +622,15 @@
         perimeter: Forge.geometry ? Forge.geometry.perimeter(pts, closed) : 0
       });
     }
-    if (!subpaths.length) throw new Error('No drawable geometry found in SVG.');
+    if (!subpaths.length) {
+      if (textCount > 0) {
+        throw new Error('No drawable geometry — this SVG contains ' + textCount +
+          ' <text> element(s) which are not rasterised. Convert text to paths ' +
+          'in your editor (Inkscape: Path -> Object to Path) or use the built-in ' +
+          'Text sign mode.');
+      }
+      throw new Error('No drawable geometry found in SVG.');
+    }
 
     var bw = all.maxX - all.minX, bh = all.maxY - all.minY;
 

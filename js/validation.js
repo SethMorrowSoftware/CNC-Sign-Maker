@@ -34,9 +34,25 @@
 
     /* --- final depth must be below the surface --- */
     if (finalDepth >= 0) {
-      add('warn', 'Final depth is ' + finalDepth + 'mm. Depth should be ' +
-        'negative — below the material surface. A zero or positive value ' +
-        'leaves the bit at or above the stock and cuts nothing.');
+      add('error', 'Final depth is ' + finalDepth + 'mm. Depth must be ' +
+        'negative — below the material surface. A zero value cuts nothing; ' +
+        'a positive value would drive the bit upward into the spindle.');
+    }
+
+    /* --- safeZ / preStockZ sanity --- */
+    if (s.safeZ != null && !(s.safeZ > 0)) {
+      add('error', 'Safe Z is ' + s.safeZ + 'mm. Safe Z must be positive — ' +
+        'this is the rapid height above the stock surface (Z=0). A zero or ' +
+        'negative value lets the bit drag across the work during rapids.');
+    }
+    if (s.preStockZ != null && !(s.preStockZ > 0)) {
+      add('warn', 'Pre-stock Z is ' + s.preStockZ + 'mm. Keep this positive ' +
+        '(typical 1-3mm) — it is the last height before each plunge.');
+    }
+    if (s.safeZ != null && s.preStockZ != null && s.preStockZ >= s.safeZ) {
+      add('warn', 'Pre-stock Z (' + s.preStockZ + 'mm) is at or above Safe Z (' +
+        s.safeZ + 'mm). Pre-stock should be smaller — it is the height the ' +
+        'bit drops to just before each plunge.');
     }
 
     /* --- machine envelope (spec §10) --- */
@@ -80,12 +96,18 @@
       }
     }
 
-    /* --- bit reach vs cut depth (spec §10, gotcha 7) --- */
+    /* --- bit reach vs cut depth (spec §10, gotcha 7) ---
+       The shank clears the work at safeZ, so the bit needs to reach
+       (|cutDepth| + safeZ) into the workpiece — anything shorter means the
+       shank rubs at retract. Use max(2, safeZ) so a tiny custom safeZ
+       cannot mask the rubbing condition. */
+    var reachMargin = Math.max(2, s.safeZ > 0 ? s.safeZ : 0);
     if (bit && bit.cutting_length_mm > 0) {
-      if (Math.abs(reachDepth) + 2 >= bit.cutting_length_mm) {
-        add('error', 'Cut depth ' + fmt(reachDepth) + 'mm needs more reach than the ' +
-          'bit has (cutting length ' + bit.cutting_length_mm + 'mm, 2mm safety ' +
-          'margin). Use a longer bit or a shallower cut.');
+      if (Math.abs(reachDepth) + reachMargin >= bit.cutting_length_mm) {
+        add('error', 'Cut depth ' + fmt(reachDepth) + 'mm + safe-Z clearance ' +
+          fmt(reachMargin) + 'mm exceeds the bit cutting length (' +
+          bit.cutting_length_mm + 'mm). The shank would rub the work. ' +
+          'Use a longer bit or a shallower cut.');
       }
     } else if (needsBit) {
       add('info', 'Selected bit has no cutting-length recorded — depth-vs-reach ' +
@@ -105,9 +127,54 @@
         'or set the V-bit angle on the Bit tab.');
     }
 
+    /* --- V-bit on a non-V-carve operation ---
+       A V-bit only cuts at its flank; using it for profile-out / profile-in /
+       drill / pocket would gouge with no continuous flute along depth. */
+    if (bit && bit.type === 'V-bit' &&
+        (op === 'profile-out' || op === 'profile-in' || op === 'drill' ||
+         op === 'pocket')) {
+      add('warn', 'Selected bit is a V-bit but the operation is "' + op +
+        '". V-bits only cut at the flank — use a regular end mill for ' +
+        'profile / drill / pocket work.');
+    }
+
+    /* --- DOC vs tool diameter (bad practice → warn) ---
+       Standard rule of thumb: DOC <= bit diameter for soft materials,
+       <= half diameter for harder ones. A DOC > diameter on a small bit
+       loads the cutter heavily and risks breakage. */
+    if (bit && bit.diameter_mm > 0 && s.docPerPass > 0 &&
+        op !== 'engrave' && op !== 'vcarve') {
+      if (s.docPerPass > bit.diameter_mm) {
+        add('warn', 'DOC per pass (' + s.docPerPass + 'mm) is larger than the ' +
+          'bit diameter (' + bit.diameter_mm + 'mm). The bit is heavily loaded ' +
+          'and at risk of breakage. Reduce DOC to at most the bit diameter.');
+      }
+    }
+
+    /* --- Plunge feed should be slower than cut feed --- */
+    if (s.feedCut > 0 && s.feedPlunge > 0 && s.feedPlunge > s.feedCut) {
+      add('warn', 'Plunge feed (' + s.feedPlunge + ' mm/min) is faster than ' +
+        'cut feed (' + s.feedCut + ' mm/min). Plunging is the hardest move on ' +
+        'a bit — keep it at 25-40% of cut feed.');
+    }
+
+    /* --- Spindle RPM vs material recommendation --- */
+    if (material && material.recommended_rpm > 0 && s.spindleRpm > 0) {
+      var rpmDelta = Math.abs(s.spindleRpm - material.recommended_rpm) /
+                     material.recommended_rpm;
+      if (rpmDelta > 0.35) {
+        add('info', 'Spindle RPM (' + s.spindleRpm + ') is ' +
+          (s.spindleRpm > material.recommended_rpm ? 'well above' : 'well below') +
+          ' the material recommendation (' + material.recommended_rpm + '). ' +
+          'For a manual router, set the dial to match.');
+      }
+    }
+
 
     /* --- text-sign usable interior --- */
-    if (s.signWidth > 0 && s.signHeight > 0) {
+    // Only meaningful in text mode — signWidth/signHeight are dead state when
+    // the user uploaded an SVG or traced a bitmap.
+    if (s.inputMode === 'text' && s.signWidth > 0 && s.signHeight > 0) {
       var frameInset = s.frame ? Math.max(0, s.frameInset || 0) : 0;
       var textPad = Math.max(0, s.textPadding || 0);
       var insetTotal = frameInset + textPad;
@@ -120,15 +187,32 @@
       }
     }
 
-    /* --- stock margin vs tool offset (spec §10) --- */
+    /* --- stock margin vs tool offset (spec §10) ---
+       If the suggested margin would push the part past the machine envelope,
+       leave the warning but omit the apply-fix — the user must shrink the
+       part or change origin manually. */
     var toolOffset = s.toolOffsetOverride > 0
       ? s.toolOffsetOverride
       : (bit && bit.diameter_mm > 0 ? bit.diameter_mm / 2 : 0) +
         (s.finishingAllowance != null ? s.finishingAllowance : 0.15);
     if (op === 'profile-out' && s.stockMargin <= toolOffset) {
+      var suggestedMargin = Math.ceil(toolOffset + 5);
+      var extra = { id: 'stock-margin' };
+      // Check whether bumping margin would still fit. b is set above when
+      // toolpath bounds are available.
+      var marginDelta = suggestedMargin - (s.stockMargin || 0);
+      if (b && isFinite(b.minX) && s.machineX > 0 && s.machineY > 0) {
+        var wouldFit = (b.maxX + marginDelta) <= s.machineX + 0.01 &&
+                       (b.maxY + marginDelta) <= s.machineY + 0.01;
+        if (wouldFit) extra.suggest = { stockMargin: suggestedMargin };
+      } else {
+        extra.suggest = { stockMargin: suggestedMargin };
+      }
       add('warn', 'Stock margin (' + s.stockMargin + 'mm) is smaller than the tool ' +
-        'offset (' + fmt(toolOffset) + 'mm). The outside toolpath may run off the stock.',
-        { id: 'stock-margin', suggest: { stockMargin: Math.ceil(toolOffset + 5) } });
+        'offset (' + fmt(toolOffset) + 'mm). The outside toolpath may run off the stock.' +
+        (extra.suggest ? '' : ' Increasing margin would exceed the machine envelope — ' +
+          'shrink the part or change origin instead.'),
+        extra);
     }
 
     /* --- chip load (spec §10) --- */
@@ -143,13 +227,30 @@
       }
     }
 
-    /* --- deep plunge without pecking (spec §10, gotcha) --- */
-    if (op === 'engrave' && Math.abs(finalDepth) > 30 && s.plungeStyle !== 'peck') {
-      add('warn', 'Engrave plunges ' + Math.abs(finalDepth) + 'mm in one move. ' +
-        'Switch the plunge style to "peck" to clear chips.');
+    /* --- deep plunge without pecking ---
+       Per-plunge depth is docPerPass for stepped ops (profile/pocket/drill/
+       v-carve when stepping), or |finalDepth| for a non-stepping op. If that
+       per-plunge depth exceeds ~3x bit diameter (or 5mm without bit info),
+       peck is strongly recommended for chip clearing. */
+    var bitD = bit && bit.diameter_mm > 0 ? bit.diameter_mm : 0;
+    var perPlungeDepth = (op === 'engrave' &&
+        Math.abs(finalDepth) <= (s.docPerPass || Math.abs(finalDepth)))
+      ? Math.abs(finalDepth)
+      : Math.min(Math.abs(finalDepth), s.docPerPass || Math.abs(finalDepth));
+    var plungeThreshold = bitD > 0 ? Math.max(3, bitD * 3) : 5;
+    if (perPlungeDepth > plungeThreshold && s.plungeStyle === 'straight' &&
+        (op === 'engrave' || op === 'profile-out' || op === 'profile-in' ||
+         op === 'pocket' || op === 'drill')) {
+      add('warn', 'Per-plunge depth (' + perPlungeDepth.toFixed(1) +
+        'mm) is large for a straight plunge. Switch plunge style to "peck" ' +
+        '(or "helical" for closed profiles) to clear chips and protect the bit.');
     }
 
-    /* --- tabs (gotcha 5) --- */
+    /* --- tabs (gotcha 5) ---
+       Distinguish the user-set "tab thickness" (target remaining material)
+       from the actual remaining material the toolpath will leave. They only
+       diverge on through-cuts where material thickness is known and the
+       toolpath cuts through it. */
     if (op === 'profile-out' && s.tabsEnabled) {
       if (s.tabThickness < 1) {
         add('error', 'Tab thickness ' + s.tabThickness + 'mm is too thin — tabs below ' +
@@ -164,7 +265,11 @@
       }
     }
 
-    /* --- HDPE + multi-flute (gotcha 6) --- */
+    /* --- HDPE + multi-flute (gotcha 6) ---
+       HDPE is the catastrophic case (melts dangerously). Acrylic is the
+       chip-quality case. Anything the material library flags as preferring
+       an O-flute bit gets a generic warning — covers HDPE/acrylic/PVC under
+       custom names that the substring match would otherwise miss. */
     if (material && /hdpe/i.test(material.name || '') && bit && bit.flute_count > 1) {
       add('error', 'Multi-flute bits melt HDPE. Use a single-flute O-flute bit.');
     }
@@ -172,9 +277,19 @@
       add('warn', 'Acrylic cuts best with a single-flute O-flute bit — multi-flute ' +
         'bits tend to melt and chip it.');
     }
+    if (material && bit && bit.flute_count > 1 &&
+        material.recommended_bit_type === 'O-flute' &&
+        !/hdpe/i.test(material.name || '') &&
+        !/acrylic/i.test(material.name || '')) {
+      add('warn', 'This material is tagged for an O-flute bit (chip-clearing for ' +
+        'plastics). Multi-flute bits may melt or chip it — use a single-flute ' +
+        'O-flute instead.');
+    }
 
-    /* --- through-cut depth vs material thickness (gotcha 4, 15) --- */
-    if (material && material.thickness_mm > 0 && (op === 'profile-out' || op === 'profile-in')) {
+    /* --- through-cut depth vs material thickness (gotcha 4, 15) ---
+       Only applies to profile-out (a real through-cut). Profile-in is an
+       inside pocket / opening and rarely intended to go all the way through. */
+    if (material && material.thickness_mm > 0 && op === 'profile-out') {
       var th = material.thickness_mm;
       var over = material.through_cut_overage_mm != null ? material.through_cut_overage_mm : 0.65;
       if (Math.abs(finalDepth) < th - 0.05) {
@@ -251,9 +366,15 @@
     if (job && job.source && job.source.trace) {
       var t = job.source.trace;
       var nodes = t.nodesAfter || 0;
+      // 30 k is where preview/cut start to feel sluggish on modest hardware.
+      // 120 k is where the browser may stall outright — keep that as a hard
+      // error-style warning.
       if (nodes > 120000) {
-        add('warn', 'Bitmap trace generated ' + nodes + ' nodes. This may cut slowly. ' +
-          'Increase simplify (mm), raise min island area, or use a cleaner source image.');
+        add('warn', 'Bitmap trace generated ' + nodes + ' nodes — preview and cut ' +
+          'will be slow. Raise the Simplify (mm) value or use a cleaner source image.');
+      } else if (nodes > 30000) {
+        add('info', 'Bitmap trace generated ' + nodes + ' nodes — cut may be slower ' +
+          'than expected. Raising Simplify (mm) by 0.05 typically halves node count.');
       }
       if (nodes > 0 && t.nodesBefore && nodes / t.nodesBefore > 0.9) {
         add('info', 'Trace simplification is very light. If runtime is high, raise ' +
