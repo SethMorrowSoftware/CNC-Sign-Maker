@@ -98,15 +98,18 @@ The parser must reliably handle SVGs from the real-world tools the user employs:
 **Required parser behavior:**
 
 1. **Walk every element** in the SVG. Apply CSS/XML `transform=` attributes cumulatively as you descend.
-2. **Resolve units.** SVG can specify `width="800mm"`, `width="800"` (units depend on viewBox), or pixel sizes. Compute the SVG-unit to mm ratio at the root and apply to all coordinates.
-3. **Tessellate curves.** Convert `C / S / Q / T / A` segments to line segments at a configurable chord-tolerance (default 0.1mm). Lower tolerance for finer detail; higher for faster preview.
-4. **Identify closed subpaths.** A subpath ending in `Z` is a closed polygon. Group consecutive open path commands until the next `M` or `Z`.
-5. **Classify each subpath** as one of:
+2. **Resolve units.** SVG can specify `width="800mm"`, `width="800"` (units depend on viewBox), or pixel sizes. Compute the SVG-unit to mm ratio at the root and apply to all coordinates. Unit suffix is matched case-insensitively (`100MM`, `5IN` parse the same as `100mm`, `5in`).
+3. **Honour `preserveAspectRatio`** on the root `<svg>` (default `xMidYMid meet` — uniform scale with centering). Non-uniform `width`/`height` against `viewBox` no longer silently stretches geometry.
+4. **Tessellate curves.** Convert `C / S / Q / T / A` segments to line segments at a configurable chord-tolerance (default 0.1mm). Degenerate cubics with coincident endpoints are detected and treated as flat — without this guard, self-returning curves (legal SVG) recurse to depth 24 and produce ~33M points.
+5. **Resolve `<use>` references.** Including `<use>` of `<symbol>` (which is otherwise skipped), with `width`/`height` overrides that scale the instance against the symbol's viewBox.
+6. **CSS hidden classes.** Parse `<style>` blocks for `.classname{display:none}` / `visibility:hidden` rules and skip elements whose `class` attribute matches.
+7. **Identify closed subpaths.** A subpath ending in `Z` is a closed polygon. Open paths whose last vertex lies within 0.01 mm of the first are promoted to closed automatically (many hand-made SVGs omit the `Z`).
+8. **Classify each subpath** as one of:
    - **Hole** (small closed polygon, e.g. bolt-clearance hole) — flag by user-settable area threshold (default <50mm²).
    - **Outer profile** (large closed polygon).
    - **Open curve / engraving line** (not closed).
-6. **Winding-order detection.** Determine if each polygon is CW or CCW. Holes inside outer profiles must have opposite winding from their parent (per SVG even-odd or non-zero fill rules).
-7. **Bounding box.** Compute overall and per-subpath bounding boxes for centering / scaling.
+9. **Winding-order detection.** Determine if each polygon is CW or CCW. Holes inside outer profiles must have opposite winding from their parent (per SVG even-odd or non-zero fill rules).
+10. **Bounding box.** Compute overall and per-subpath bounding boxes for centering / scaling.
 
 **Recommended parser interface:**
 ```javascript
@@ -125,7 +128,7 @@ const geometry = parseSvg(svgText);
 The tool supports six operations, selectable per-job:
 
 ### 5.1 Engrave (centerline)
-- Bit traces the path centerline at a single shallow depth.
+- Bit traces the path centerline. Multi-pass when `|finalDepth| > DOC` — steps from 0 down to final depth in DOC increments. Shallow engraves stay single-pass.
 - No tool radius compensation.
 - Useful for: logos, signage on two-color HDPE, dimensional verification ("groove-center to groove-center"), text.
 
@@ -148,8 +151,9 @@ The tool supports six operations, selectable per-job:
 - Multi-depth internal profile offset for interior cutouts/openings.
 
 ### 5.6 Drill / hole circle
-- For small features where `bit_diameter > hole_diameter`: single plunge cycle at hole center (creates oversized hole).
-- For features where `bit_diameter < hole_diameter`: bit plunges at center, traces a circle at radius `(hole_d/2 - bit_r)`, returns. Multi-depth pecking optional.
+- **Circularity check first**: only features that are approximately circular (≥ 8 vertices, polygon area within 5% of the equivalent circle's area, and max radial deviation < 8% of mean radius) get a drill cycle. Non-circular small features (squares, irregular blobs) fall back to **profile-in** so the cutter follows the actual shape — drilling a square as a circle would cut a circle ~41% larger than the square's inscribed radius. The operator can override by setting an explicit *target hole diameter*.
+- For circular features where `bit_diameter > hole_diameter`: pecked plunge cycle at the hole center (creates oversized hole). Retract above the stock surface between pecks so chips clear.
+- For circular features where `bit_diameter < hole_diameter`: bit plunges at center, traces a circle at radius `(hole_d/2 - bit_r)`, returns. Multi-depth with chip-clearing retract above stock between every depth pass.
 - Useful for: M3/M5/M6 mounting hole patterns.
 
 ## 6. Settings Catalog
@@ -194,7 +198,7 @@ Every setting that has caused a real-world problem during actual cutting. Settin
 |---|---|---|---|
 | Enable tabs | bool | true | |
 | Tab count per profile | int | 4 | |
-| Tab thickness (mm) | float | 1.5 | Material left below bit at tab |
+| Tab thickness (mm) | float | 1.5 | Material left under the bit at the tab. When the material thickness is known (selected from the library) **and** the cut goes through it, tab Z anchors to the material bottom so this number is the actual remaining tab. Without material info, the formula falls back to "raise the bit `tabThickness` mm above `finalDepth`" — which can produce a thinner tab when the cut overshoots into the spoilboard. |
 | Tab width (mm) | float | 6.0 | Along perimeter |
 | Tab placement | enum | even | currently even spacing in implementation |
 
@@ -293,8 +297,9 @@ M3 S{rpm}   ; no-op for manual router; informational
 
 ; --- Footer ---
 G0 Z{safe_z}
+M5                                  ; spindle off BEFORE parking (no-op on
+                                    ;  the Makita, but safe for VFD setups)
 G0 X0 Y0
-M5
 {optional M0 pause for manual router off}
 M30
 ```
@@ -317,11 +322,16 @@ For each subpath, by operation type:
 
 ### Engrave
 ```
+depths = compute_pass_depths(final_z, doc)  ; same logic as profile-out
 for each subpath:
-    G0 X{first}, G0 Z{pre-stock}
-    G1 Z{final-depth} F{plunge}
-    for each subsequent point:
-        G1 X Y F{cut}
+    G0 X{first}, G0 Z{safe}, G0 Z{pre-stock}
+    for depth in depths:
+        if open subpath and not first pass:
+            G0 Z{pre-stock}, G0 X{first}    ; rapid back to start
+        plunge from current Z to depth (honours peck/helical)
+        for each subsequent point:
+            G1 X Y F{cut} Z{depth}
+        if closed: G1 X{first} Y{first} F{cut} Z{depth}
     G0 Z{safe}
 ```
 
@@ -345,36 +355,75 @@ for depth in depths:
 
 ### Drill hole
 ```
-hpr = (hole_d/2) - bit_r  ; can be negative for oversized hole
-if hpr <= 0:
-    # bit bigger than hole — just plunge
-    G0 X{center}, G0 Z{pre-stock}
+if not is_approximately_circular(subpath) and no target hole diameter:
+    # cutting a square as a circle would gouge corners — fall back
+    return profile_in(subpath)
+
+hpr = (hole_d/2) - bit_r  ; can be near-zero or negative for oversized hole
+if hpr <= 0.05:
+    # bit at least as wide as hole — peck-plunge in place
+    G0 X{center}, G0 Z{safe}, G0 Z{pre-stock}
     for depth in depths:
-        G1 Z{depth} F{plunge}
-        G0 Z{retract}  ; peck
+        if not first pass:
+            G0 Z{pre-stock}          ; retract above stock for chip clearing
+            G0 Z{prev_depth + 0.5}   ; rapid back into cleared hole
+        descend to depth (honours peck plunge style)
     G0 Z{safe}
 else:
     # trace a circle inside the hole
+    G0 X{center}, G0 Z{safe}, G0 Z{pre-stock}
     for depth in depths:
-        G1 Z{depth} F{plunge}
+        if not first pass:
+            G0 Z{pre-stock}          ; retract above stock
+            G0 Z{prev_depth + 0.5}   ; rapid back into cleared circle
+        descend to depth (honours peck)
         G1 X{center+hpr} Y{center} F{cut}
         G2 X{center+hpr} Y{center} I{-hpr} J0 F{cut}
         G1 X{center} Y{center} F{cut}
     G0 Z{safe}
 ```
 
+Peck retracts inside `descend()` always rise above the stock surface
+(`max(preStockZ, fromZ)`), not back to wherever the plunge started — so chips
+clear even when the descent begins deep inside an existing hole on pass 2+.
+
 ## 10. Validation & Safety Checks (run before allowing download)
 
-| Check | Action if fail |
+**Blocking (error level — gcode generation refused):**
+
+| Check | Action |
 |---|---|
-| Geometry fits within machine envelope | Block download; show overlap on canvas |
-| Final depth ≤ bit cutting length | Block download |
-| Stock margin > tool radius + offset | Warning; offer to auto-adjust |
-| Hole diameter < bit diameter on a "drill" feature | Warning; suggest larger hole or smaller bit |
-| Feed rate × flutes × RPM = chip load outside 0.05-0.30mm | Warning; suggest revised feed |
-| Total Z descent > 30mm without peck plunge | Warning; suggest peck |
-| Machine envelope X/Y mismatch with SVG orientation | Suggest rotation |
-| Multiple closed contours overlap | Warning; manual review needed |
+| `finalDepth >= 0` | Block — would drive bit upward into spindle / cut nothing |
+| `safeZ <= 0` | Block — bit drags during rapids |
+| `|reachDepth| + max(2, safeZ) >= bit.cutting_length` | Block — shank rubs at retract |
+| Geometry fits within machine envelope | Block; show overlap on canvas |
+| Toolpath has negative X/Y on `bottom-left` origin | Block — LowRider work area is positive-only |
+| HDPE + multi-flute bit | Block — multi-flute melts HDPE |
+| V-carve without a V-bit + valid included angle | Block |
+| Tab thickness `< 1mm` | Block — tabs snap mid-cut |
+
+**Warnings (advisory):**
+
+| Check | Action |
+|---|---|
+| `docPerPass > bit.diameter_mm` (non-engrave/v-carve) | Warn — chip load risk |
+| `feedPlunge > feedCut` | Warn — plunge is hardest move |
+| O-flute-recommended material + multi-flute bit | Warn — generalises the HDPE/acrylic rule |
+| V-bit on profile-out / profile-in / pocket / drill | Warn — no flutes along depth |
+| Chip load outside 0.05–0.30 mm window | Warn |
+| Per-plunge depth > `max(3, bit.diameter_mm * 3)` mm with `plungeStyle = straight` | Warn — suggest peck/helical |
+| Stock margin ≤ tool offset on profile-out | Warn; offer fix (suppressed if fix would exceed envelope) |
+| Through-cut depth shallower than material or much deeper than (thickness + overage) | Info / warn (profile-out only) |
+| Hole diameter ≤ bit diameter on a drill feature | Warn; oversized hole noted in gcode header |
+| Non-circular small feature on drill op | Info — auto-fallback to profile-in |
+| Tabs above 2 mm thick | Warn — flush-trim cleanup needed |
+| `tabThickness >= |finalDepth|` | Warn — tabs aren't cut into |
+| `preStockZ >= safeZ` | Warn — pre-stock should be the smaller of the two |
+| Multiple closed contours overlap | Warn — manual review needed |
+| Machine envelope X/Y mismatch with SVG orientation | Suggest 90° rotation |
+| Bitmap trace > 30k nodes | Info — cut may be slow |
+| Bitmap trace > 120k nodes | Warn — preview and cut will be slow |
+| Spindle RPM far from material recommendation | Info |
 
 ## 11. Data Model (SQLite)
 
@@ -485,7 +534,7 @@ Real lessons from real bench time — every one of these caused a problem during
 4. **Unsurfaced spoilboard can have 2mm of dish.** Build in a "through-cut overage" setting (default 0.65mm) that the operator can crank up if their spoilboard is rough.
 5. **Tabs too thin = part breaks loose mid-cut.** Don't let tabs go below 1mm thickness. Warning above 2mm: "Will require flush-trim cleanup."
 6. **Single flute is mandatory for HDPE.** When user picks an HDPE material with a multi-flute bit, show a red banner: "Multi-flute bits melt HDPE — use single-flute O-flute."
-7. **Bit cutting length limits depth.** Validate `abs(final_z) + 2 < bit.cutting_length` (the 2mm safety lets the bit stay above material at safe-Z).
+7. **Bit cutting length limits depth.** Validate `abs(final_z) + max(2, safeZ) < bit.cutting_length`. The clearance margin must equal Safe Z, not a hardcoded 2 mm — a user with `safeZ = 15` running a 22 mm bit to 20 mm depth would otherwise pass the old check while the shank rubs the stock surface at every retract.
 8. **Strut plates and similar parametric parts aren't linearly scalable.** When user uploads an SVG that looks like it might be parametric (multiple repeated brace patterns), show an info banner: "If this is a parametric part designed for a specific dimension, regenerate the SVG at the correct size rather than scaling."
 9. **Sharp corners + high feed = wiggle.** When feed × acceleration suggests corner overshoot beyond 0.2mm, suggest dropping the feed.
 10. **Two-color HDPE cap layers vary by manufacturer.** Default engrave depth 0.3-0.5mm; document range in the material tooltip.
@@ -494,6 +543,14 @@ Real lessons from real bench time — every one of these caused a problem during
 13. **Hole diameter vs bit diameter.** If hole_d < bit_d, fall back to plunge cycle and clearly note this in the generated gcode header.
 14. **Air pass before real cut.** Offer a "generate air pass" toggle that produces a separate gcode file identical to the main one but with all Z values offset by +25mm. Lets the operator verify the toolpath in space before any cutting.
 15. **Z=0 reference inconsistency.** Always say "Z=0 on top of material" in header; never assume Z=0 is on the spoilboard.
+16. **Tab thickness vs through-cut overage.** "Tab thickness" must mean *material remaining under the bit*, not *bit rise above final depth*. With a 0.65 mm spoilboard overage on a 6.35 mm material, a 1.5 mm "tab thickness" using the naive `tabZ = finalDepth + tabThickness` formula leaves only 0.85 mm of actual material — under the validator's 1 mm minimum and prone to snapping. When material thickness is known, anchor tab Z to the material bottom.
+17. **Drill non-circular features.** A small square classified as a "hole" by area would, without a circularity check, be drilled as a circle ~41% larger than its inscribed radius — gouging past every corner. Verify circularity (polygon-vs-circle area ratio and radial uniformity) before drilling; fall back to profile-in for non-circular features.
+18. **Engrave depth.** A "single shallow depth" engrave is fine for 0.5–3 mm; for anything deeper, step in DOC increments like every other op. A 5 mm engrave plunged in one move on a small bit will snap the cutter.
+19. **Peck retract destination.** On multi-pass drilling, the peck-retract must rise *above the stock surface*, not back to wherever `fromZ` was. Pass 2 starts inside the existing hole — retracting to that fromZ leaves the bit in its own chips.
+20. **Spindle-off timing in the footer.** Emit `M5` *before* the rapid back to `X0 Y0`. With a manual Makita it's a no-op; with a wired VFD, keeping the spindle on through the parking move risks dragging a spinning bit across freshly cut work if Safe Z is mis-set.
+21. **Safe Z is part of bit reach.** The shank must clear the work at retract, not just the cutting tip. Validate `|final_z| + max(2, safeZ) < bit.cutting_length`.
+22. **SVG self-returning cubics.** A cubic Bezier with `p0 == p3` (legal SVG, common in stylized blobs) fails any non-zero flatness test by ratio. Detect zero-chord curves and bound the recursion depth — otherwise 2²⁵ ≈ 33M points get generated and the browser hangs.
+23. **SVG viewport aspect handling.** Default `preserveAspectRatio` is uniform with centering. Applying independent X/Y scales when viewport aspect differs from viewBox aspect cuts physically wrong-sized parts.
 
 ## 15. Stretch Goals / Future Versions
 
@@ -605,4 +662,19 @@ Test SVGs shipped in `samples/`:
 
 ## 19. Implementation Status
 
-This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing with stale-run protection, six operation modes, and the current tab behavior (even placement). The seeded library ships 19 bits, 20 materials and 4 sample presets (see `api/db.php`), and the shape builder offers 20 base shapes plus 6 border variants (see `js/shapes.js`).
+This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing (via `importScripts` of `bitmap-tracer.js` so the algorithm lives in one file) with stale-run protection, six operation modes, and the current tab behavior (even placement, material-aware Z anchoring on through-cuts). The seeded library ships 19 bits, 20 materials and 4 sample presets (see `api/db.php`), and the shape builder offers 20 base shapes plus 6 border variants (see `js/shapes.js`).
+
+### Recent hardening pass (post-audit)
+
+A pre-flight audit before live use surfaced several correctness issues that the current code now fixes:
+
+- **Tab Z on through-cuts** now anchors to the material bottom when the material thickness is known, so the *Tab thickness* setting equals the actual remaining material — the shipped plywood preset used to produce 0.85 mm tabs while the UI said 1.5 mm.
+- **Peck drilling** retracts above the stock surface between every peck and every depth pass, then rapids back down through the cleared hole — proper G73-style chip clearing on multi-pass drills.
+- **Non-circular drill features** fall back to profile-in instead of being cut as oversized circles (a square classified as a "hole" by area would otherwise be cut as a circle ~41% larger than the design).
+- **Engrave** steps in DOC increments like every other operation; shallow engraves stay single-pass.
+- **SVG degenerate cubic Beziers** (legal self-returning curves) no longer trigger a 33 M-point recursion that hung the browser.
+- **`<use>` of `<symbol>`** now produces geometry (was silently skipped); `<use width/height>` on a viewBox'd target scales the instance correctly.
+- **SVG `preserveAspectRatio`** is honoured — the parser used to stretch viewport-resized files.
+- **Footer order**: `M5` emits before the parking rapid so a VFD-controlled spindle (if ever wired) doesn't spin through the return move.
+- **Validation severity** corrected: `finalDepth >= 0` is now an error; `safeZ <= 0` blocks; bit cutting-length margin uses `max(2, safeZ)` not a hardcoded 2 mm; the through-cut depth check no longer fires (false positive) on profile-in.
+- **New validation warnings**: DOC > bit diameter, plunge feed > cut feed, V-bit on a non-V-carve op, O-flute-recommended material with a multi-flute bit (generalises the HDPE/acrylic rule), spindle RPM vs material recommendation.
