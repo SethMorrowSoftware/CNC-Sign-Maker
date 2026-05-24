@@ -104,6 +104,7 @@
     };
     return {
       source: geometry && geometry.trace ? { trace: geometry.trace } : null,
+      hint: geometry && geometry.hint ? geometry.hint : null,
       subpaths: subpaths,
       partBbox: partBbox,
       partWidth: partBbox.maxX - partBbox.minX,
@@ -139,13 +140,21 @@
 
   /* ---- plunge / descent ---------------------------------------------- */
 
-  /** Z descent from `fromZ` to `toZ`, honouring the plunge style. */
+  /** Z descent from `fromZ` to `toZ`, honouring the plunge style.
+      Peck retracts always rise above the stock surface so chips can clear,
+      even if `fromZ` is deep inside an existing hole (multi-pass drill). */
   function descend(fromZ, toZ, ctx) {
     var m = [];
     if (toZ >= fromZ) { return [{ t: 'plunge', z: toZ, f: ctx.feedPlunge }]; }
     if (ctx.plungeStyle !== 'peck') {
       return [{ t: 'plunge', z: toZ, f: ctx.feedPlunge }];
     }
+    // Retract destination must be above the stock surface for real chip
+    // clearing. fromZ alone is wrong: if descend is called from inside a
+    // partly-drilled hole (drillSubpath pass 2+), retracting to fromZ leaves
+    // the bit packed in its own chips.
+    var preStock = ctx.preStockZ != null ? ctx.preStockZ : 2;
+    var clearZ = Math.max(preStock, fromZ);
     var step = Math.max(0.8, ctx.peckStep), targets = [], z = fromZ;
     while (true) {
       z -= step;
@@ -157,7 +166,7 @@
       if (cz !== fromZ) m.push({ t: 'rapid', z: cz + 0.5 });
       m.push({ t: 'plunge', z: targets[i], f: ctx.feedPlunge });
       cz = targets[i];
-      if (i < targets.length - 1) m.push({ t: 'rapid', z: fromZ });
+      if (i < targets.length - 1) m.push({ t: 'rapid', z: clearZ });
     }
     return m;
   }
@@ -295,17 +304,33 @@
 
   function engraveSubpath(sub, ctx) {
     var pts = sub.points, moves = [];
+    // Engrave steps in DOC increments like every other op — a single plunge
+    // to a deep finalDepth can snap a small bit on the first contact.
+    // For shallow engraves (|finalDepth| <= DOC) this still produces a single pass.
+    var depths = computeDepths(ctx.finalDepth, ctx.docPerPass);
     moves.push({ t: 'rapid', x: pts[0][0], y: pts[0][1], z: ctx.safeZ });
     moves.push({ t: 'rapid', z: ctx.preStockZ });
-    descend(ctx.preStockZ, ctx.finalDepth, ctx).forEach(function (m) { moves.push(m); });
-    for (var i = 1; i < pts.length; i++) {
-      moves.push({ t: 'cut', x: pts[i][0], y: pts[i][1], z: ctx.finalDepth, f: ctx.feedCut });
-    }
-    if (sub.closed) {
-      moves.push({ t: 'cut', x: pts[0][0], y: pts[0][1], z: ctx.finalDepth, f: ctx.feedCut });
-    }
+    var fromZ = ctx.preStockZ;
+    depths.forEach(function (depth, di) {
+      if (di > 0 && !sub.closed) {
+        // Open paths must return to the starting point before each pass.
+        // Closed paths end at the start vertex so they can plunge in place.
+        moves.push({ t: 'rapid', z: ctx.preStockZ });
+        moves.push({ t: 'rapid', x: pts[0][0], y: pts[0][1] });
+        fromZ = ctx.preStockZ;
+      }
+      descend(fromZ, depth, ctx).forEach(function (m) { moves.push(m); });
+      for (var i = 1; i < pts.length; i++) {
+        moves.push({ t: 'cut', x: pts[i][0], y: pts[i][1], z: depth, f: ctx.feedCut });
+      }
+      if (sub.closed) {
+        moves.push({ t: 'cut', x: pts[0][0], y: pts[0][1], z: depth, f: ctx.feedCut });
+      }
+      fromZ = depth;
+    });
     moves.push({ t: 'rapid', z: ctx.safeZ });
-    return { kind: 'engrave', color: OP_COLORS.engrave, moves: moves, tabs: [] };
+    return { kind: 'engrave', color: OP_COLORS.engrave, moves: moves, tabs: [],
+             passes: depths.length };
   }
 
   function profileSubpath(sub, ctx, outward) {
@@ -336,24 +361,67 @@
     };
   }
 
+  /** True when the polygon is close enough to a circle to safely drill as
+      a round hole. A square classified as a "hole" by area would, without
+      this check, get drilled as a circle 41% larger than the design. */
+  function isApproximatelyCircular(points, c, meanR) {
+    if (!(meanR > 0) || points.length < 8) return false;
+    var polyArea = Math.abs(G.area(points));
+    var circleArea = Math.PI * meanR * meanR;
+    var ratio = polyArea / circleArea;
+    // A regular polygon with N>=12 vertices reaches ~97% of the circle's
+    // area; <0.93 means hex or fewer — not a circle.
+    if (ratio < 0.93 || ratio > 1.05) return false;
+    // Also require radii within 8% of the mean — catches stretched ellipses
+    // and irregular blobs that happen to have circle-like area.
+    var maxDev = 0;
+    for (var i = 0; i < points.length; i++) {
+      var r = Math.hypot(points[i][0] - c[0], points[i][1] - c[1]);
+      var dev = Math.abs(r - meanR);
+      if (dev > maxDev) maxDev = dev;
+    }
+    return maxDev / meanR < 0.08;
+  }
+
   function drillSubpath(sub, ctx) {
     var c = G.centroid(sub.points);
     var meanR = 0;
     sub.points.forEach(function (p) { meanR += Math.hypot(p[0] - c[0], p[1] - c[1]); });
     meanR /= sub.points.length;
+
+    // If the polygon isn't reasonably circular and the user hasn't pinned a
+    // hole diameter, refuse — drilling a square as a circle would gouge past
+    // the design corners. Caller falls back to profile-in (see build()).
+    if (!(ctx.targetHoleDiameter > 0) &&
+        !isApproximatelyCircular(sub.points, c, meanR)) {
+      return { kind: 'drill', empty: true, notCircular: true,
+               color: OP_COLORS.drill, moves: [], tabs: [] };
+    }
+
     var holeD = ctx.targetHoleDiameter > 0 ? ctx.targetHoleDiameter : meanR * 2;
     var hpr = holeD / 2 - ctx.toolDiameter / 2;        // helical-path radius
     var depths = computeDepths(ctx.finalDepth, ctx.docPerPass);
     var moves = [];
 
     if (hpr <= 0.05) {
-      // bit is as wide as / wider than the hole — plunge in place (oversized)
+      // bit is as wide as / wider than the hole — plunge in place (oversized).
+      // Use descend() so 'peck' plunge style produces real chip-clearing
+      // retracts, and retract above the stock between depth passes too.
       moves.push({ t: 'rapid', x: c[0], y: c[1], z: ctx.safeZ });
       moves.push({ t: 'rapid', z: ctx.preStockZ });
-      depths.forEach(function (depth) {
-        moves.push({ t: 'plunge', x: c[0], y: c[1], z: depth, f: ctx.feedPlunge });
-        var retract = Math.min(ctx.safeZ, depth + ctx.peckRetract);
-        moves.push({ t: 'rapid', z: retract });
+      var ocz = ctx.preStockZ;
+      depths.forEach(function (depth, di) {
+        if (di > 0) {
+          // Retract above stock to clear chips, then rapid back into the
+          // existing hole just above the previous depth.
+          moves.push({ t: 'rapid', z: ctx.preStockZ });
+          moves.push({ t: 'rapid', z: depths[di - 1] + 0.5 });
+          ocz = depths[di - 1] + 0.5;
+        }
+        descend(ocz, depth, ctx).forEach(function (m) {
+          moves.push(Object.assign({ x: c[0], y: c[1] }, m));
+        });
+        ocz = depth;
       });
       moves.push({ t: 'rapid', z: ctx.safeZ });
       return { kind: 'drill', color: OP_COLORS.drill, moves: moves, tabs: [],
@@ -365,7 +433,14 @@
     moves.push({ t: 'rapid', x: c[0], y: c[1], z: ctx.safeZ });
     moves.push({ t: 'rapid', z: ctx.preStockZ });
     var cz = ctx.preStockZ;
-    depths.forEach(function (depth) {
+    depths.forEach(function (depth, di) {
+      if (di > 0) {
+        // Retract above stock for chip clearing between depth passes,
+        // then rapid back into the cleared circle just above last depth.
+        moves.push({ t: 'rapid', x: c[0], y: c[1], z: ctx.preStockZ });
+        moves.push({ t: 'rapid', z: depths[di - 1] + 0.5 });
+        cz = depths[di - 1] + 0.5;
+      }
       descend(cz, depth, ctx).forEach(function (m) {
         moves.push(Object.assign({ x: c[0], y: c[1] }, m));
       });
@@ -552,21 +627,47 @@
 
   /**
    * Build a full toolpath.
-   * @param {object} job   output of prepareJob
-   * @param {object} s     settings
-   * @param {object} bit   selected bit row (may be null)
+   * @param {object} job      output of prepareJob
+   * @param {object} s        settings
+   * @param {object} bit      selected bit row (may be null)
+   * @param {object} material selected material row (may be null) — used to
+   *                          compute a correct tab Z on through-cuts
    * @returns {object} { ops, stats, warnings }
    */
-  function build(job, s, bit) {
+  function build(job, s, bit, material) {
     var bitD = bit && bit.diameter_mm > 0 ? bit.diameter_mm : 0;
     var toolOffset = s.toolOffsetOverride > 0
       ? s.toolOffsetOverride
       : bitD / 2 + (s.finishingAllowance != null ? s.finishingAllowance : 0.15);
 
+    // Tab Z calculation. The user-facing "Tab thickness" is the height of
+    // material LEFT under the bit after cutting. The old `tabZ = finalDepth +
+    // tabThickness` interpretation silently produced sub-spec tabs whenever
+    // the cut went through into the spoilboard (the overage). When the
+    // material thickness is known and the cut goes through it, anchor tabZ
+    // to the material bottom; otherwise fall back to the rise-from-deepest
+    // behaviour.
+    var finalDepthVal = s.finalDepth != null ? s.finalDepth : -1;
+    var tabThicknessVal = s.tabThickness != null ? s.tabThickness : 1.5;
+    var matThickness = material && material.thickness_mm > 0
+      ? material.thickness_mm : 0;
+    var isThroughCut = matThickness > 0 &&
+      Math.abs(finalDepthVal) >= matThickness - 0.05;
+    var tabZ;
+    if (isThroughCut) {
+      // Bottom of material is at Z = -matThickness. Leave tabThickness of
+      // material above that bottom: tabZ = -matThickness + tabThickness.
+      // Clamped to 0 so a tab thicker than the material doesn't lift the bit
+      // above the surface.
+      tabZ = Math.min(0, -matThickness + tabThicknessVal);
+    } else {
+      tabZ = Math.min(0, finalDepthVal + tabThicknessVal);
+    }
+
     var ctx = {
       safeZ: s.safeZ != null ? s.safeZ : 10,
       preStockZ: s.preStockZ != null ? s.preStockZ : 2,
-      finalDepth: s.finalDepth != null ? s.finalDepth : -1,
+      finalDepth: finalDepthVal,
       docPerPass: s.docPerPass != null ? s.docPerPass : 1,
       feedCut: s.feedCut > 0 ? s.feedCut : 1000,
       feedPlunge: s.feedPlunge > 0 ? s.feedPlunge : 400,
@@ -583,7 +684,9 @@
       tabWidth: s.tabWidth != null ? s.tabWidth : 6,
       tabPlacement: s.tabPlacement || 'even',
       manualTabs: s.manualTabs || null,
-      tabZ: Math.min(0, (s.finalDepth || -1) + (s.tabThickness != null ? s.tabThickness : 1.5))
+      tabZ: tabZ,
+      tabZIsThroughCut: isThroughCut,
+      materialThickness: matThickness
     };
 
     var op = s.operation || 'engrave';
@@ -612,6 +715,7 @@
       }
     }
 
+    var nonCircularFallbacks = 0;
     job.subpaths.forEach(function (sub) {
       if (op === 'pocket' || op === 'vcarve' ||
           !sub.points || sub.points.length < 2) return;
@@ -620,11 +724,23 @@
       if (op === 'engrave') {
         built = engraveSubpath(sub, ctx);
       } else if (sub.type === 'hole' && op !== 'profile-in') {
-        // small features always get a drill cycle (spec §8 rule 3, gotcha 13)
+        // small features get a drill cycle if they're round; otherwise fall
+        // back to profile-in so a square hole gets cut as a square, not as
+        // a circle 41% larger than the design.
         built = drillSubpath(sub, ctx);
+        if (built && built.notCircular) {
+          nonCircularFallbacks++;
+          ctx.applyTabs = false;
+          built = profileSubpath(sub, ctx, false);
+        }
       } else if (op === 'drill') {
         if (!sub.closed) { openSkipped++; return; }
         built = drillSubpath(sub, ctx);
+        if (built && built.notCircular) {
+          nonCircularFallbacks++;
+          ctx.applyTabs = false;
+          built = profileSubpath(sub, ctx, false);
+        }
       } else if (op === 'profile-out') {
         if (!sub.closed) { openSkipped++; return; }
         ctx.applyTabs = ctx.tabsEnabled;
@@ -645,6 +761,13 @@
         }
       }
     });
+
+    if (nonCircularFallbacks > 0) {
+      warnings.push(nonCircularFallbacks + ' non-circular feature(s) cut ' +
+        'with profile-in instead of drill — drilling them as circles would ' +
+        'have gouged past the design corners. Set a target hole diameter ' +
+        'on the Geometry tab to force drilling.');
+    }
 
     if (openSkipped > 0) {
       warnings.push(openSkipped + ' open contour(s) skipped — "' + op +
