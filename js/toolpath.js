@@ -28,7 +28,12 @@
    * Result is in machine space and classified against the hole threshold.
    */
   function prepareJob(geometry, s) {
-    var scale = (s.scale || 100) / 100;
+    // A non-positive scale (0, negative or NaN) is invalid input. A NEGATIVE
+    // value would silently mirror the part — a wrong cut with no warning — so
+    // fall back to 100%. This guards every path into prepareJob regardless of
+    // how the bad value arrived (manual entry, a saved preset, or restored
+    // localStorage), not just the UI number field's soft min.
+    var scale = (s.scale > 0 ? s.scale : 100) / 100;
     var rot = ((s.rotation || 0) % 360 + 360) % 360;
     var rad = rot * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
 

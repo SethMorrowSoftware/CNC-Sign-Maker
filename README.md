@@ -21,6 +21,7 @@ the core of the tool keeps working even when the backend is unreachable.
 - [Highlights](#highlights)
 - [Requirements](#requirements)
 - [Install](#install)
+- [Security &amp; deployment hardening](#security--deployment-hardening)
 - [Quick start](#quick-start)
 - [The interface](#the-interface)
 - [Artwork](#artwork)
@@ -78,11 +79,18 @@ the core of the tool keeps working even when the backend is unreachable.
 ```bash
 git clone <this-repo> lowrider-forge
 cd lowrider-forge
-./install.sh           # optional — creates data/ and seeds the database
-php -S localhost:8000  # serve from the project root
+./install.sh                      # optional — creates data/ and seeds the database
+php -S localhost:8000 router.php  # serve from the project root
 ```
 
 Then open <http://localhost:8000>.
+
+> Launch the built-in server **with `router.php`** as shown. PHP's built-in
+> server ignores `.htaccess`, so without the router the `data/` directory —
+> the SQLite database and any saved gcode — is reachable over HTTP. `router.php`
+> denies `data/` and dotfiles and passes everything else through; on Apache it
+> is ignored (the `.htaccess` rules apply). See
+> [Security &amp; deployment hardening](#security--deployment-hardening).
 
 ### Shared cPanel hosting (production)
 
@@ -98,6 +106,31 @@ The app never assumes its install path, so a subdirectory
 (`example.com/forge/`) behaves exactly like a document root. The database
 deliberately uses a rollback journal rather than WAL, because cPanel home
 directories are usually NFS-backed and SQLite's WAL mode is not NFS-safe.
+
+## Security &amp; deployment hardening
+
+The tool ships **no authentication** and is built for a **trusted local
+network** — never expose it to the public internet. Beyond that, how the
+`data/` directory (the SQLite database plus saved gcode) is kept off the web
+depends on the server you run it on:
+
+- **Apache / cPanel (production).** The bundled `.htaccess` files already deny
+  direct access to `data/`, the database, dotfiles and the spec/installer —
+  nothing more to do.
+- **PHP built-in server (local dev).** `.htaccess` is **ignored**. Always start
+  it with the bundled router: `php -S localhost:8000 router.php`. The router
+  returns `404` for any request under `data/` or to a dotfile and serves
+  everything else unchanged.
+- **nginx.** `.htaccess` is **ignored**. Add deny rules to your server block
+  before routing the API through PHP-FPM:
+
+  ```nginx
+  location ^~ /data/ { deny all; return 404; }
+  location ~ /\.     { deny all; return 404; }
+  ```
+
+If you cannot apply server rules, move `data/` outside the web root and update
+`forge_data_dir()` in `api/db.php` to point at the new location.
 
 ## Quick start
 
@@ -505,5 +538,7 @@ samples/                  Test SVGs (square, circle, holes plate, text)
   stadium with straight sides). A real stadium would need the shape API to
   know the target width/height aspect — out of scope for v1.
 - There is no authentication; deploy the tool only on a trusted local network.
+  On non-Apache servers the `data/` directory must be protected explicitly —
+  see [Security &amp; deployment hardening](#security--deployment-hardening).
 
 See `spec.md` for the full design specification.
