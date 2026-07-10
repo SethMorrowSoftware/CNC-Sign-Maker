@@ -58,14 +58,20 @@ function handle_materials(string $method, ?int $id): void
             }
             $p = material_payload(read_json_body());
             $p['id'] = $id;
-            $s = $db->prepare('UPDATE materials SET
-                name=:name, thickness_mm=:thickness_mm, recommended_bit_type=:recommended_bit_type,
-                recommended_rpm=:recommended_rpm, recommended_feed_cut=:recommended_feed_cut,
-                recommended_feed_plunge=:recommended_feed_plunge, recommended_doc_mm=:recommended_doc_mm,
-                through_cut_overage_mm=:through_cut_overage_mm, notes=:notes WHERE id=:id');
-            $s->execute($p);
-            if ($s->rowCount() === 0) {
+            $exists = $db->prepare('SELECT 1 FROM materials WHERE id = ?');
+            $exists->execute([$id]);
+            if (!$exists->fetchColumn()) {
                 json_response(['error' => 'Material not found'], 404);
+            }
+            try {
+                $s = $db->prepare('UPDATE materials SET
+                    name=:name, thickness_mm=:thickness_mm, recommended_bit_type=:recommended_bit_type,
+                    recommended_rpm=:recommended_rpm, recommended_feed_cut=:recommended_feed_cut,
+                    recommended_feed_plunge=:recommended_feed_plunge, recommended_doc_mm=:recommended_doc_mm,
+                    through_cut_overage_mm=:through_cut_overage_mm, notes=:notes WHERE id=:id');
+                $s->execute($p);
+            } catch (PDOException $e) {
+                json_response(['error' => 'A material with that name already exists'], 409);
             }
             $s = $db->prepare('SELECT * FROM materials WHERE id = ?');
             $s->execute([$id]);
