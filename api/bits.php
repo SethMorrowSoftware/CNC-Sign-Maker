@@ -64,13 +64,19 @@ function handle_bits(string $method, ?int $id): void
             }
             $p = bit_payload(read_json_body());
             $p['id'] = $id;
-            $s = $db->prepare('UPDATE bits SET
-                name=:name, diameter_mm=:diameter_mm, shank_diameter_mm=:shank_diameter_mm,
-                flute_count=:flute_count, cutting_length_mm=:cutting_length_mm,
-                type=:type, v_angle_deg=:v_angle_deg, notes=:notes WHERE id=:id');
-            $s->execute($p);
-            if ($s->rowCount() === 0) {
+            $exists = $db->prepare('SELECT 1 FROM bits WHERE id = ?');
+            $exists->execute([$id]);
+            if (!$exists->fetchColumn()) {
                 json_response(['error' => 'Bit not found'], 404);
+            }
+            try {
+                $s = $db->prepare('UPDATE bits SET
+                    name=:name, diameter_mm=:diameter_mm, shank_diameter_mm=:shank_diameter_mm,
+                    flute_count=:flute_count, cutting_length_mm=:cutting_length_mm,
+                    type=:type, v_angle_deg=:v_angle_deg, notes=:notes WHERE id=:id');
+                $s->execute($p);
+            } catch (PDOException $e) {
+                json_response(['error' => 'A bit with that name already exists'], 409);
             }
             $s = $db->prepare('SELECT * FROM bits WHERE id = ?');
             $s->execute([$id]);
