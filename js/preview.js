@@ -184,7 +184,57 @@
         });
         ctx.setLineDash([]);
       }
-      // cutting moves
+      // material removed: a translucent swath as wide as the bit under every
+      // cut move. Without this, a pocket's concentric fill shells read as
+      // "thicker outlines" — the thin centerlines give no hint that the bit
+      // clears a full kerf around each one and the letters cut solid.
+      var toolD = tp.ctx && tp.ctx.toolDiameter > 0 ? tp.ctx.toolDiameter : 0;
+      var vTan = tp.ctx && tp.ctx.vAngle > 0
+        ? Math.tan((tp.ctx.vAngle / 2) * Math.PI / 180) : 0;
+      if (toolD > 0 || vTan > 0) {
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.globalAlpha = 0.30;
+        cx = 0; cy = 0;
+        tp.ops.forEach(function (op) {
+          ctx.strokeStyle = op.color; ctx.fillStyle = op.color;
+          op.moves.forEach(function (m) {
+            var nx = m.x != null ? m.x : cx, ny = m.y != null ? m.y : cy;
+            // V-carve kerf grows with depth; flat cutters use the bit width.
+            var kerf = (op.kind === 'vcarve' && vTan > 0 && m.z != null)
+              ? 2 * Math.abs(m.z) * vTan
+              : toolD;
+            var w = kerf * view.scale;
+            if (w > 0.5 && (m.t === 'cut' || m.t === 'arc' || m.t === 'plunge')) {
+              if (m.t === 'cut' && (nx !== cx || ny !== cy)) {
+                ctx.lineWidth = w;
+                line(toScreenX(cx), toScreenY(cy), toScreenX(nx), toScreenY(ny));
+              } else if (m.t === 'arc' && isFinite(m.i) && isFinite(m.j)) {
+                ctx.lineWidth = w;
+                var accx = cx + m.i, accy = cy + m.j;
+                var ar = Math.hypot(m.i, m.j) * view.scale;
+                var afull = Math.abs(nx - cx) < 1e-6 && Math.abs(ny - cy) < 1e-6;
+                ctx.beginPath();
+                if (afull) {
+                  ctx.arc(toScreenX(accx), toScreenY(accy), ar, 0, 2 * Math.PI);
+                } else {
+                  ctx.arc(toScreenX(accx), toScreenY(accy), ar,
+                    Math.atan2(-(cy - accy), cx - accx),
+                    Math.atan2(-(ny - accy), nx - accx), !m.ccw);
+                }
+                ctx.stroke();
+              } else if (m.t === 'plunge') {
+                ctx.beginPath();
+                ctx.arc(toScreenX(nx), toScreenY(ny), w / 2, 0, 2 * Math.PI);
+                ctx.fill();
+              }
+            }
+            cx = nx; cy = ny;
+          });
+        });
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'butt';
+      }
+      // cutting moves (tool centerlines, drawn on top of the removal swath)
       ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
       cx = 0; cy = 0;
       tp.ops.forEach(function (op) {
