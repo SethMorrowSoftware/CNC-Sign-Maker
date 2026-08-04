@@ -534,7 +534,7 @@ Real lessons from real bench time — every one of these caused a problem during
 4. **Unsurfaced spoilboard can have 2mm of dish.** Build in a "through-cut overage" setting (default 0.65mm) that the operator can crank up if their spoilboard is rough.
 5. **Tabs too thin = part breaks loose mid-cut.** Don't let tabs go below 1mm thickness. Warning above 2mm: "Will require flush-trim cleanup."
 6. **Single flute is mandatory for HDPE.** When user picks an HDPE material with a multi-flute bit, show a red banner: "Multi-flute bits melt HDPE — use single-flute O-flute."
-7. **Bit cutting length limits depth.** Validate `abs(final_z) + max(2, safeZ) < bit.cutting_length`. The clearance margin must equal Safe Z, not a hardcoded 2 mm — a user with `safeZ = 15` running a 22 mm bit to 20 mm depth would otherwise pass the old check while the shank rubs the stock surface at every retract.
+7. **Bit cutting length limits depth.** Validate `abs(final_z) <= bit.cutting_length` (error past it, warning within 1 mm of it). The flute length limits engagement *in the material*; Safe Z is a rapid height above the stock and must not be added to the comparison — doing so falsely blocks shallow V-carves and engraves with short-flute bits (a 10 mm-flute V-bit cutting 2 mm deep is fine at any Safe Z).
 8. **Strut plates and similar parametric parts aren't linearly scalable.** When user uploads an SVG that looks like it might be parametric (multiple repeated brace patterns), show an info banner: "If this is a parametric part designed for a specific dimension, regenerate the SVG at the correct size rather than scaling."
 9. **Sharp corners + high feed = wiggle.** When feed × acceleration suggests corner overshoot beyond 0.2mm, suggest dropping the feed.
 10. **Two-color HDPE cap layers vary by manufacturer.** Default engrave depth 0.3-0.5mm; document range in the material tooltip.
@@ -676,5 +676,5 @@ A pre-flight audit before live use surfaced several correctness issues that the 
 - **`<use>` of `<symbol>`** now produces geometry (was silently skipped); `<use width/height>` on a viewBox'd target scales the instance correctly.
 - **SVG `preserveAspectRatio`** is honoured — the parser used to stretch viewport-resized files.
 - **Footer order**: `M5` emits before the parking rapid so a VFD-controlled spindle (if ever wired) doesn't spin through the return move.
-- **Validation severity** corrected: `finalDepth >= 0` is now an error; `safeZ <= 0` blocks; bit cutting-length margin uses `max(2, safeZ)` not a hardcoded 2 mm; the through-cut depth check no longer fires (false positive) on profile-in.
+- **Validation severity** corrected: `finalDepth >= 0` is now an error; `safeZ <= 0` blocks; the bit cutting-length check compares flute length against cut depth alone (adding Safe Z falsely blocked short-flute V-bits); the through-cut depth check no longer fires (false positive) on profile-in.
 - **New validation warnings**: DOC > bit diameter, plunge feed > cut feed, V-bit on a non-V-carve op, O-flute-recommended material with a multi-flute bit (generalises the HDPE/acrylic rule), spindle RPM vs material recommendation.

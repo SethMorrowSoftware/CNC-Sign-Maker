@@ -97,17 +97,22 @@
     }
 
     /* --- bit reach vs cut depth (spec §10, gotcha 7) ---
-       The shank clears the work at safeZ, so the bit needs to reach
-       (|cutDepth| + safeZ) into the workpiece — anything shorter means the
-       shank rubs at retract. Use max(2, safeZ) so a tiny custom safeZ
-       cannot mask the rubbing condition. */
-    var reachMargin = Math.max(2, s.safeZ > 0 ? s.safeZ : 0);
+       The flute (cutting) length limits how deep the bit can go into the
+       material: once |cut depth| exceeds it, the non-cutting shank or the
+       grind transition rubs the top of the cut wall and burns the edge.
+       Safe Z is deliberately NOT part of this check — at retract the tool
+       tip is above the stock, so rapid height has no bearing on flute
+       engagement. (Collet-vs-work clearance depends on total stickout,
+       which the bit library does not record.) */
     if (bit && bit.cutting_length_mm > 0) {
-      if (Math.abs(reachDepth) + reachMargin >= bit.cutting_length_mm) {
-        add('error', 'Cut depth ' + fmt(reachDepth) + 'mm + safe-Z clearance ' +
-          fmt(reachMargin) + 'mm exceeds the bit cutting length (' +
-          bit.cutting_length_mm + 'mm). The shank would rub the work. ' +
-          'Use a longer bit or a shallower cut.');
+      if (Math.abs(reachDepth) > bit.cutting_length_mm) {
+        add('error', 'Cut depth ' + fmt(reachDepth) + 'mm exceeds the bit ' +
+          'cutting length (' + bit.cutting_length_mm + 'mm). The shank would ' +
+          'rub the cut wall. Use a longer bit or a shallower cut.');
+      } else if (Math.abs(reachDepth) > bit.cutting_length_mm - 1) {
+        add('warn', 'Cut depth ' + fmt(reachDepth) + 'mm is within 1mm of the ' +
+          'bit cutting length (' + bit.cutting_length_mm + 'mm). The flute top ' +
+          'will sit at the surface — verify the collet and shank clear the work.');
       }
     } else if (needsBit) {
       add('info', 'Selected bit has no cutting-length recorded — depth-vs-reach ' +
