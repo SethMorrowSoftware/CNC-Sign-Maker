@@ -44,16 +44,9 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    /* ---- fit the machine envelope (or stock) into view ---- */
-    function fit() {
+    /* ---- fit helpers ---- */
+    function fitBounds(minX, minY, maxX, maxY) {
       resize();
-      var w = scene && scene.job ? scene.job.stockWidth : (scene ? scene.machineX : 1270);
-      var h = scene && scene.job ? scene.job.stockHeight : (scene ? scene.machineY : 2540);
-      var ox = 0, oy = 0;
-      if (scene && scene.job) { ox = scene.job.stock.minX; oy = scene.job.stock.minY; }
-      // include the origin (0,0) in the fitted area
-      var minX = Math.min(ox, 0), minY = Math.min(oy, 0);
-      var maxX = Math.max(ox + w, 0), maxY = Math.max(oy + h, 0);
       var pad = 40;
       var sx = (cssW - 2 * pad) / Math.max(1, maxX - minX);
       var sy = (cssH - 2 * pad) / Math.max(1, maxY - minY);
@@ -63,6 +56,34 @@
       view.panY = pad - minY * view.scale +
         (cssH - 2 * pad - (maxY - minY) * view.scale) / 2;
       render();
+    }
+
+    /** Zoom to the stock (the sign). The machine envelope usually extends
+        far off-screen in this view — use fitMachine to see proportions. */
+    function fit() {
+      var w = scene && scene.job ? scene.job.stockWidth : (scene ? scene.machineX : 1270);
+      var h = scene && scene.job ? scene.job.stockHeight : (scene ? scene.machineY : 2540);
+      var ox = 0, oy = 0;
+      if (scene && scene.job) { ox = scene.job.stock.minX; oy = scene.job.stock.minY; }
+      // include the origin (0,0) in the fitted area
+      fitBounds(Math.min(ox, 0), Math.min(oy, 0),
+                Math.max(ox + w, 0), Math.max(oy + h, 0));
+    }
+
+    /** Zoom out to the whole machine bed, so the sign is seen at its true
+        size relative to the cutting area — the stock-fitted view makes a
+        300mm sign fill the screen and *look* bigger than the machine. */
+    function fitMachine() {
+      var machX = scene ? scene.machineX : 1270;
+      var machY = scene ? scene.machineY : 2540;
+      var minX = 0, minY = 0, maxX = machX, maxY = machY;
+      if (scene && scene.job) {
+        minX = Math.min(minX, scene.job.stock.minX);
+        minY = Math.min(minY, scene.job.stock.minY);
+        maxX = Math.max(maxX, scene.job.stock.maxX);
+        maxY = Math.max(maxY, scene.job.stock.maxY);
+      }
+      fitBounds(minX, minY, maxX, maxY);
     }
 
     /* ---- grid ---- */
@@ -364,6 +385,7 @@
       setScene: function (s) { scene = s; },
       render: render,
       fit: fit,
+      fitMachine: fitMachine,
       zoom: function (factor) {
         view.scale = Math.max(0.03, Math.min(200, view.scale * factor));
         render();
