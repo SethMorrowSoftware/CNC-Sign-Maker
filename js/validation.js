@@ -32,8 +32,28 @@
     var reachDepth = (op === 'vcarve' && vcarveOp && vcarveOp.depthReached != null)
       ? -vcarveOp.depthReached : finalDepth;
 
+    /* --- critical numerics must actually be set ---
+       An emptied number field stores null, and the toolpath would quietly
+       substitute hard-coded fallbacks (finalDepth -1, feed 1000, ...) that
+       differ from what the operator sees. Block generation instead. */
+    if (s.finalDepth == null || !isFinite(s.finalDepth)) {
+      add('error', 'Final depth is not set. Enter a negative depth (below the ' +
+        'material surface) on the Operation tab.');
+    }
+    if (!(s.docPerPass > 0)) {
+      add('error', 'DOC per pass must be a positive number — it is the depth ' +
+        'removed on each pass. A zero or empty value would cut the full depth ' +
+        'in a single pass.');
+    }
+    if (!(s.feedCut > 0)) {
+      add('error', 'Cut feed must be a positive number (mm/min).');
+    }
+    if (!(s.feedPlunge > 0)) {
+      add('error', 'Plunge feed must be a positive number (mm/min).');
+    }
+
     /* --- final depth must be below the surface --- */
-    if (finalDepth >= 0) {
+    if (s.finalDepth != null && isFinite(s.finalDepth) && finalDepth >= 0) {
       add('error', 'Final depth is ' + finalDepth + 'mm. Depth must be ' +
         'negative — below the material surface. A zero value cuts nothing; ' +
         'a positive value would drive the bit upward into the spindle.');
@@ -349,6 +369,14 @@
     if (s.useM0) {
       add('info', 'M0 pauses are enabled — the program will stop and wait for ' +
         'Cycle Start before and after the cut.');
+    }
+
+    /* --- clipped/masked artwork is cut UNCLIPPED --- */
+    if (job.hint && job.hint.clipMask > 0) {
+      add('warn', job.hint.clipMask + ' element(s) in this SVG use clip-path ' +
+        'or mask, which this tool ignores — the FULL unclipped outlines will ' +
+        'be cut. Flatten/outline the clipping in your editor first ' +
+        '(Inkscape: Path -> Intersection) and re-export.');
     }
 
     /* --- parametric part (gotcha 8) --- */

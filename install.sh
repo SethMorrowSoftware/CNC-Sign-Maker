@@ -22,14 +22,20 @@ fi
 
 # 2. Data directory
 mkdir -p data/jobs
-chmod -R 775 data 2>/dev/null || true
 echo "Data directory ready: $(pwd)/data"
 
 # 3. Seed the database
 php -r 'define("FORGE_APP",true); require "api/db.php"; forge_db();
         echo "Database seeded: ".forge_data_dir()."/forge.sqlite\n";'
 
+# 4. Permissions — AFTER seeding, so the database file itself is covered.
+#    (chmod before the seed left forge.sqlite at the CLI user's umask; on
+#    hosts where the web server runs as a different user every write then
+#    failed with "attempt to write a readonly database".)
+chmod 775 data data/jobs 2>/dev/null || true
+chmod 664 data/forge.sqlite 2>/dev/null || true
+
 echo
 echo "Install complete. Start a local server from this directory with:"
-echo "    php -S localhost:8000"
+echo "    php -S localhost:8000 router.php"
 echo "then open http://localhost:8000"

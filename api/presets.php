@@ -38,7 +38,13 @@ function handle_presets(string $method, ?int $id): void
             $operation = require_str($body, 'operation');
             $settings  = $body['settings'] ?? $body['settings_json'] ?? [];
             if (is_string($settings)) {
-                $settings = json_decode($settings, true) ?: [];
+                $decoded = json_decode($settings, true);
+                if (!is_array($decoded)) {
+                    // Silently storing an empty preset on undecodable JSON
+                    // would report success while dropping every setting.
+                    json_response(['error' => 'settings is not valid JSON'], 400);
+                }
+                $settings = $decoded;
             }
             $now = time();
             $params = [
