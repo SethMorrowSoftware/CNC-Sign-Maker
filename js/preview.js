@@ -44,16 +44,9 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    /* ---- fit the machine envelope (or stock) into view ---- */
-    function fit() {
+    /* ---- fit helpers ---- */
+    function fitBounds(minX, minY, maxX, maxY) {
       resize();
-      var w = scene && scene.job ? scene.job.stockWidth : (scene ? scene.machineX : 1270);
-      var h = scene && scene.job ? scene.job.stockHeight : (scene ? scene.machineY : 2540);
-      var ox = 0, oy = 0;
-      if (scene && scene.job) { ox = scene.job.stock.minX; oy = scene.job.stock.minY; }
-      // include the origin (0,0) in the fitted area
-      var minX = Math.min(ox, 0), minY = Math.min(oy, 0);
-      var maxX = Math.max(ox + w, 0), maxY = Math.max(oy + h, 0);
       var pad = 40;
       var sx = (cssW - 2 * pad) / Math.max(1, maxX - minX);
       var sy = (cssH - 2 * pad) / Math.max(1, maxY - minY);
@@ -63,6 +56,34 @@
       view.panY = pad - minY * view.scale +
         (cssH - 2 * pad - (maxY - minY) * view.scale) / 2;
       render();
+    }
+
+    /** Zoom to the stock (the sign). The machine envelope usually extends
+        far off-screen in this view — use fitMachine to see proportions. */
+    function fit() {
+      var w = scene && scene.job ? scene.job.stockWidth : (scene ? scene.machineX : 1270);
+      var h = scene && scene.job ? scene.job.stockHeight : (scene ? scene.machineY : 2540);
+      var ox = 0, oy = 0;
+      if (scene && scene.job) { ox = scene.job.stock.minX; oy = scene.job.stock.minY; }
+      // include the origin (0,0) in the fitted area
+      fitBounds(Math.min(ox, 0), Math.min(oy, 0),
+                Math.max(ox + w, 0), Math.max(oy + h, 0));
+    }
+
+    /** Zoom out to the whole machine bed, so the sign is seen at its true
+        size relative to the cutting area — the stock-fitted view makes a
+        300mm sign fill the screen and *look* bigger than the machine. */
+    function fitMachine() {
+      var machX = scene ? scene.machineX : 1270;
+      var machY = scene ? scene.machineY : 2540;
+      var minX = 0, minY = 0, maxX = machX, maxY = machY;
+      if (scene && scene.job) {
+        minX = Math.min(minX, scene.job.stock.minX);
+        minY = Math.min(minY, scene.job.stock.minY);
+        maxX = Math.max(maxX, scene.job.stock.maxX);
+        maxY = Math.max(maxY, scene.job.stock.maxY);
+      }
+      fitBounds(minX, minY, maxX, maxY);
     }
 
     /* ---- grid ---- */
@@ -163,7 +184,57 @@
         });
         ctx.setLineDash([]);
       }
-      // cutting moves
+      // material removed: a translucent swath as wide as the bit under every
+      // cut move. Without this, a pocket's concentric fill shells read as
+      // "thicker outlines" — the thin centerlines give no hint that the bit
+      // clears a full kerf around each one and the letters cut solid.
+      var toolD = tp.ctx && tp.ctx.toolDiameter > 0 ? tp.ctx.toolDiameter : 0;
+      var vTan = tp.ctx && tp.ctx.vAngle > 0
+        ? Math.tan((tp.ctx.vAngle / 2) * Math.PI / 180) : 0;
+      if (toolD > 0 || vTan > 0) {
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.globalAlpha = 0.30;
+        cx = 0; cy = 0;
+        tp.ops.forEach(function (op) {
+          ctx.strokeStyle = op.color; ctx.fillStyle = op.color;
+          op.moves.forEach(function (m) {
+            var nx = m.x != null ? m.x : cx, ny = m.y != null ? m.y : cy;
+            // V-carve kerf grows with depth; flat cutters use the bit width.
+            var kerf = (op.kind === 'vcarve' && vTan > 0 && m.z != null)
+              ? 2 * Math.abs(m.z) * vTan
+              : toolD;
+            var w = kerf * view.scale;
+            if (w > 0.5 && (m.t === 'cut' || m.t === 'arc' || m.t === 'plunge')) {
+              if (m.t === 'cut' && (nx !== cx || ny !== cy)) {
+                ctx.lineWidth = w;
+                line(toScreenX(cx), toScreenY(cy), toScreenX(nx), toScreenY(ny));
+              } else if (m.t === 'arc' && isFinite(m.i) && isFinite(m.j)) {
+                ctx.lineWidth = w;
+                var accx = cx + m.i, accy = cy + m.j;
+                var ar = Math.hypot(m.i, m.j) * view.scale;
+                var afull = Math.abs(nx - cx) < 1e-6 && Math.abs(ny - cy) < 1e-6;
+                ctx.beginPath();
+                if (afull) {
+                  ctx.arc(toScreenX(accx), toScreenY(accy), ar, 0, 2 * Math.PI);
+                } else {
+                  ctx.arc(toScreenX(accx), toScreenY(accy), ar,
+                    Math.atan2(-(cy - accy), cx - accx),
+                    Math.atan2(-(ny - accy), nx - accx), !m.ccw);
+                }
+                ctx.stroke();
+              } else if (m.t === 'plunge') {
+                ctx.beginPath();
+                ctx.arc(toScreenX(nx), toScreenY(ny), w / 2, 0, 2 * Math.PI);
+                ctx.fill();
+              }
+            }
+            cx = nx; cy = ny;
+          });
+        });
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'butt';
+      }
+      // cutting moves (tool centerlines, drawn on top of the removal swath)
       ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
       cx = 0; cy = 0;
       tp.ops.forEach(function (op) {
@@ -364,6 +435,7 @@
       setScene: function (s) { scene = s; },
       render: render,
       fit: fit,
+      fitMachine: fitMachine,
       zoom: function (factor) {
         view.scale = Math.max(0.03, Math.min(200, view.scale * factor));
         render();

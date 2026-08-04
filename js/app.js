@@ -1840,6 +1840,7 @@
     $('#zoom-in').addEventListener('click', function () { preview.zoom(1.25); });
     $('#zoom-out').addEventListener('click', function () { preview.zoom(0.8); });
     $('#zoom-fit').addEventListener('click', function () { preview.fit(); });
+    $('#zoom-bed').addEventListener('click', function () { preview.fitMachine(); });
     $('#t-rapids').addEventListener('change', function () {
       preview.options.showRapids = this.checked; preview.render();
     });
