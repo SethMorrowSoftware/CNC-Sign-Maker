@@ -368,8 +368,10 @@ The validator encodes the hard-won lessons from real bench time:
   the bit upward into the spindle instead of cutting. Blocked.
 - **Safe Z must be positive.** A zero or negative Safe Z lets the bit drag
   across the work during rapids.
-- **Bit cutting length** is checked against `|cut depth| + Safe Z` — the shank
-  must clear the work at retract, not just the cutting tip.
+- **Bit cutting length** is checked against `|cut depth|` — once the cut goes
+  deeper than the flutes, the non-cutting shank rubs the cut wall. A cut within
+  1&nbsp;mm of the flute length raises a warning to double-check collet
+  clearance.
 - **HDPE with a multi-flute bit** — multi-flute bits melt HDPE and can flame.
 - **Negative XY coordinates** with the front-left origin block generation,
   so the LowRider's positive-only work area is never violated.

@@ -51,7 +51,14 @@ function handle_bits(string $method, ?int $id): void
                     VALUES (:name,:diameter_mm,:shank_diameter_mm,:flute_count,:cutting_length_mm,:type,:v_angle_deg,:notes)');
                 $s->execute($p);
             } catch (PDOException $e) {
-                json_response(['error' => 'A bit with that name already exists'], 409);
+                // Only a UNIQUE/constraint violation means "name taken".
+                // A read-only database or full disk also throws PDOException
+                // and must surface as a 500 with the real cause, not send the
+                // user renaming in circles.
+                if ((string) $e->getCode() === '23000') {
+                    json_response(['error' => 'A bit with that name already exists'], 409);
+                }
+                throw $e;
             }
             $s = $db->prepare('SELECT * FROM bits WHERE id = ?');
             $s->execute([(int) $db->lastInsertId()]);
@@ -76,7 +83,14 @@ function handle_bits(string $method, ?int $id): void
                     type=:type, v_angle_deg=:v_angle_deg, notes=:notes WHERE id=:id');
                 $s->execute($p);
             } catch (PDOException $e) {
-                json_response(['error' => 'A bit with that name already exists'], 409);
+                // Only a UNIQUE/constraint violation means "name taken".
+                // A read-only database or full disk also throws PDOException
+                // and must surface as a 500 with the real cause, not send the
+                // user renaming in circles.
+                if ((string) $e->getCode() === '23000') {
+                    json_response(['error' => 'A bit with that name already exists'], 409);
+                }
+                throw $e;
             }
             $s = $db->prepare('SELECT * FROM bits WHERE id = ?');
             $s->execute([$id]);

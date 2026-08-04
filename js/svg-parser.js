@@ -298,7 +298,15 @@
   /* ---- primitive shapes ---------------------------------------------- */
 
   function num(el, name, def) {
-    var v = parseFloat(el.getAttribute(name));
+    var raw = el.getAttribute(name);
+    // Geometry attributes may carry unit suffixes ("10mm" on a rect width is
+    // valid SVG). A browser resolves them to user units at 96 dpi; a bare
+    // parseFloat would silently read the number as user units — 3.78x off.
+    if (raw != null && /(mm|cm|in|pt|pc)\s*$/i.test(String(raw).trim())) {
+      var mm = lengthToMm(raw);
+      if (mm != null) return mm * 96 / 25.4; // physical units -> user units
+    }
+    var v = parseFloat(raw);
     return isNaN(v) ? (def || 0) : v;
   }
 
@@ -416,28 +424,67 @@
     return null;
   }
 
+  /** Parse a viewBox attribute into [minX, minY, w, h], or null. */
+  function parseViewBox(el) {
+    var vb = (el.getAttribute('viewBox') || '').split(/[\s,]+/).map(parseFloat)
+      .filter(function (v) { return !isNaN(v); });
+    return (vb.length === 4 && vb[2] > 0 && vb[3] > 0) ? vb : null;
+  }
+
+  /** Matrix mapping a viewBox into a w x h viewport honouring
+      preserveAspectRatio (default "xMidYMid meet": uniform scale, centred).
+      Shared by the root <svg>, nested <svg> viewports and <use>-of-symbol. */
+  function viewBoxToViewport(vb, w, h, par) {
+    var sxRaw = w / vb[2], syRaw = h / vb[3];
+    par = (par || 'xMidYMid meet').trim();
+    var parTokens = par.split(/\s+/);
+    var align = parTokens[0] || 'xMidYMid';
+    var meetOrSlice = (parTokens[1] || 'meet').toLowerCase();
+    var sx, sy, tx, ty;
+    if (align.toLowerCase() === 'none') {
+      sx = sxRaw; sy = syRaw;
+      tx = -vb[0] * sx; ty = -vb[1] * sy;
+    } else {
+      var uniform = meetOrSlice === 'slice'
+        ? Math.max(sxRaw, syRaw)
+        : Math.min(sxRaw, syRaw);
+      sx = uniform; sy = uniform;
+      var slackX = w - vb[2] * uniform;
+      var slackY = h - vb[3] * uniform;
+      var fx = /xMin/i.test(align) ? 0 : /xMax/i.test(align) ? 1 : 0.5;
+      var fy = /YMin/.test(align) ? 0 : /YMax/.test(align) ? 1 : 0.5;
+      tx = -vb[0] * sx + slackX * fx;
+      ty = -vb[1] * sy + slackY * fy;
+    }
+    return [sx, 0, 0, sy, tx, ty];
+  }
+
   /** Compute the transform a <use> applies when it instantiates a
       <symbol> or <svg> — translate by (x, y), then if the target has a
-      viewBox and the <use> has width/height, scale uniformly so the
-      viewBox fits the use's size. */
+      viewBox and the <use> has width/height, map the viewBox into the
+      use box honouring the target's preserveAspectRatio (symbols default
+      to "xMidYMid meet": UNIFORM scale, centred — independent X/Y scales
+      would cut a reused emblem distorted). */
   function useTransform(useEl, target) {
     var ux = num(useEl, 'x'), uy = num(useEl, 'y');
     var m = [1, 0, 0, 1, ux, uy];
     var targetTag = (target.tagName || '').toLowerCase();
     if (targetTag !== 'symbol' && targetTag !== 'svg') return m;
-    var vbStr = target.getAttribute('viewBox') || '';
-    var vb = vbStr.split(/[\s,]+/).map(parseFloat).filter(function (v) { return !isNaN(v); });
-    if (vb.length !== 4 || !(vb[2] > 0) || !(vb[3] > 0)) return m;
+    var vb = parseViewBox(target);
+    if (!vb) return m;
     var wAttr = useEl.getAttribute('width'), hAttr = useEl.getAttribute('height');
     var w = wAttr != null && wAttr !== '' ? parseFloat(wAttr) : null;
     var h = hAttr != null && hAttr !== '' ? parseFloat(hAttr) : null;
-    if (w == null && h == null) return m;
+    if (w == null && h == null) {
+      // No use box: content renders at viewBox scale, but the viewBox
+      // origin must still map to the use point.
+      return Mat.mul(m, [1, 0, 0, 1, -vb[0], -vb[1]]);
+    }
     if (w == null) w = vb[2] * (h / vb[3]);
     if (h == null) h = vb[3] * (w / vb[2]);
     if (!(w > 0) || !(h > 0)) return m;
-    // viewBox -> use box: scale then translate to align the viewBox origin
-    var sx = w / vb[2], sy = h / vb[3];
-    return Mat.mul(m, [sx, 0, 0, sy, -vb[0] * sx, -vb[1] * sy]);
+    return Mat.mul(m, viewBoxToViewport(vb, w, h,
+      target.getAttribute('preserveAspectRatio')));
   }
 
   function walk(el, ctm, tol, out, root, depth, isUseTarget, hiddenClasses) {
@@ -451,6 +498,29 @@
 
     var local = parseTransform(el.getAttribute('transform'));
     var here = Mat.mul(ctm, local);
+
+    // A nested <svg> establishes its own viewport: translate to (x, y), then
+    // map its viewBox into its width/height box. Walking it like a <g> would
+    // cut pasted-in icon files at the raw viewBox unit scale and position.
+    // Skipped when entered via <use> — useTransform already applied the
+    // viewport mapping for that path.
+    if (tag === 'svg' && depth > 0 && !isUseTarget) {
+      here = Mat.mul(here, [1, 0, 0, 1, num(el, 'x'), num(el, 'y')]);
+      var nvb = parseViewBox(el);
+      if (nvb) {
+        var nwAttr = el.getAttribute('width'), nhAttr = el.getAttribute('height');
+        var nw = nwAttr != null && nwAttr !== '' ? parseFloat(nwAttr) : null;
+        var nh = nhAttr != null && nhAttr !== '' ? parseFloat(nhAttr) : null;
+        if (nw == null && nh != null) nw = nh * nvb[2] / nvb[3];
+        else if (nh == null && nw != null) nh = nw * nvb[3] / nvb[2];
+        if (nw > 0 && nh > 0) {
+          here = Mat.mul(here, viewBoxToViewport(nvb, nw, nh,
+            el.getAttribute('preserveAspectRatio')));
+        } else {
+          here = Mat.mul(here, [1, 0, 0, 1, -nvb[0], -nvb[1]]);
+        }
+      }
+    }
 
     if (tag === 'use') {
       var href = el.getAttribute('href') || el.getAttribute('xlink:href') || '';
@@ -537,38 +607,22 @@
     var root, docW, docH;
 
     if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) {
+      // A file that declares only ONE of width/height sizes the other from
+      // the viewBox aspect ratio in a browser (intrinsic aspect). Falling
+      // back to px-at-96dpi for the missing axis would fake an aspect
+      // mismatch here, and the "meet" branch below would then uniformly
+      // shrink BOTH axes — a sign cut at a fraction of its declared size,
+      // with the units warning suppressed because one axis had real units.
+      if (wMm != null && hMm == null) hMm = wMm * vb[3] / vb[2];
+      else if (hMm != null && wMm == null) wMm = hMm * vb[2] / vb[3];
       var vpW = wMm != null ? wMm : vb[2] * 25.4 / 96;
       var vpH = hMm != null ? hMm : vb[3] * 25.4 / 96;
-      var sxRaw = vpW / vb[2], syRaw = vpH / vb[3];
       // Honor preserveAspectRatio (default "xMidYMid meet" — uniform scale,
       // centered). Independent X/Y scales would stretch parts whenever the
       // viewport aspect ratio differs from the viewBox aspect — cutting
       // physically wrong-sized parts.
-      var par = (svg.getAttribute('preserveAspectRatio') || 'xMidYMid meet').trim();
-      var parTokens = par.split(/\s+/);
-      var align = parTokens[0] || 'xMidYMid';
-      var meetOrSlice = (parTokens[1] || 'meet').toLowerCase();
-      var sx, sy, tx0, ty0;
-      if (align.toLowerCase() === 'none') {
-        // explicit "none" — non-uniform scale (the previous behaviour)
-        sx = sxRaw; sy = syRaw;
-        tx0 = -vb[0] * sx; ty0 = -vb[1] * sy;
-      } else {
-        // uniform scale — choose the smaller (meet) or larger (slice) of the two
-        var uniform = meetOrSlice === 'slice'
-          ? Math.max(sxRaw, syRaw)
-          : Math.min(sxRaw, syRaw);
-        sx = uniform; sy = uniform;
-        // Aspect-correction offsets so the viewBox is centered/aligned in
-        // the viewport per the alignment token.
-        var slackX = vpW - vb[2] * uniform;
-        var slackY = vpH - vb[3] * uniform;
-        var fx = /xMin/i.test(align) ? 0 : /xMax/i.test(align) ? 1 : 0.5;
-        var fy = /YMin/.test(align) ? 0 : /YMax/.test(align) ? 1 : 0.5;
-        tx0 = -vb[0] * sx + slackX * fx;
-        ty0 = -vb[1] * sy + slackY * fy;
-      }
-      root = [sx, 0, 0, sy, tx0, ty0];
+      root = viewBoxToViewport(vb, vpW, vpH,
+        svg.getAttribute('preserveAspectRatio'));
       docW = vpW; docH = vpH;
     } else {
       var k = 25.4 / 96; // 1 user unit == 1 CSS px
@@ -577,11 +631,18 @@
     }
 
     // <text> warning — README documents that text isn't rasterised.
-    var textCount = 0;
+    // clip-path/mask references are counted too: the walker emits the FULL
+    // unclipped outline for such elements, which can cut far more geometry
+    // than the artwork the user proofed on screen — surface a warning.
+    var textCount = 0, clipMaskCount = 0;
     (function scan(n) {
       if (n.nodeType === 1 && n.tagName) {
         var t = n.tagName.toLowerCase();
         if (t === 'text' || t === 'tspan') textCount++;
+        if (!SKIP[t] && n.getAttribute &&
+            (n.getAttribute('clip-path') || n.getAttribute('mask'))) {
+          clipMaskCount++;
+        }
       }
       for (var c = n.firstChild; c; c = c.nextSibling) scan(c);
     })(svg);
@@ -652,7 +713,10 @@
       docHeightMm: docH,
       hadViewBox: vb.length === 4,
       hadUnits: hadPhysicalUnits,
-      hint: { parametric: subpaths.length > 16 && repeated > 0 },
+      hint: {
+        parametric: subpaths.length > 16 && repeated > 0,
+        clipMask: clipMaskCount
+      },
       tolerance: tol
     };
   };

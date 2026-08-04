@@ -322,12 +322,25 @@
           });
         }
         // Tooth tips don't quite reach the bbox edges — normalize the outer
-        // contour so a gear sized 100x100 really fills 100x100. Bore stays
-        // centered at the (still-symmetric) normalized centre.
+        // contour so a gear sized 100x100 really fills 100x100. For odd
+        // tooth counts the bbox is NOT centred on the rotation axis, so the
+        // true centre (0.5, 0.5) must be mapped through the same
+        // normalization — a hard-coded 0.5 leaves the bore visibly
+        // eccentric on odd-count gears.
         // Bore drawn with sweep=0 so its winding is opposite the outer gear
         // (CW) — proper hole annulus under any winding-aware fill rule.
+        var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (var k = 0; k < pts.length; k++) {
+          minX = Math.min(minX, pts[k][0]); maxX = Math.max(maxX, pts[k][0]);
+          minY = Math.min(minY, pts[k][1]); maxY = Math.max(maxY, pts[k][1]);
+        }
+        var rw = Math.max(1e-9, maxX - minX), rh = Math.max(1e-9, maxY - minY);
+        var bcx = round((0.5 - minX) / rw), bcy = round((0.5 - minY) / rh);
+        var brx = round(0.15 / rw), bry = round(0.15 / rh);
         return [polygonPath(normalizeToBbox(pts)),
-                'M0.5,0.35A0.15,0.15 0 1 0 0.5,0.65A0.15,0.15 0 1 0 0.5,0.35Z'];
+                'M' + bcx + ',' + round(bcy - bry) +
+                'A' + brx + ',' + bry + ' 0 1 0 ' + bcx + ',' + round(bcy + bry) +
+                'A' + brx + ',' + bry + ' 0 1 0 ' + bcx + ',' + round(bcy - bry) + 'Z'];
       } },
     lightning: { label: 'Lightning bolt', params: [],
       path: function () {

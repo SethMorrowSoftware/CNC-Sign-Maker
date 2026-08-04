@@ -157,9 +157,12 @@
     // Retract destination must be above the stock surface for real chip
     // clearing. fromZ alone is wrong: if descend is called from inside a
     // partly-drilled hole (drillSubpath pass 2+), retracting to fromZ leaves
-    // the bit packed in its own chips.
+    // the bit packed in its own chips. The user-set peck-retract height
+    // (mm above the stock) raises the clearing height further when it is
+    // taller than the pre-stock height.
     var preStock = ctx.preStockZ != null ? ctx.preStockZ : 2;
-    var clearZ = Math.max(preStock, fromZ);
+    var retract = ctx.peckRetract > 0 ? ctx.peckRetract : preStock;
+    var clearZ = Math.max(retract, preStock, fromZ);
     var step = Math.max(0.8, ctx.peckStep), targets = [], z = fromZ;
     while (true) {
       z -= step;

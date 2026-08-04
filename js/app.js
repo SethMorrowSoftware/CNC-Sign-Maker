@@ -28,6 +28,8 @@
     filenamePattern: '{job}_{material}_{bit}_{date}.gcode',
     headerTemplate: '', jobName: 'job',
     inputMode: 'text',
+    bitmapPreset: 'logo', bitmapThreshold: 145, bitmapMmPerPx: 0.2,
+    bitmapMinArea: 20, bitmapSimplify: 0.08,
     textContent: 'SIGN', fontKey: 'montserrat',
     signWidth: 300, signHeight: 150,
     fitToSign: true, letterHeight: 60,
@@ -68,9 +70,9 @@
       { key: 'feedPlunge', label: 'Plunge feed', type: 'number', step: 25, min: 1,
         unit: 'mm/min', hint: 'Keep this 25-40% of the cut feed.' },
       { key: 'finishingAllowance', label: 'Finishing allowance', type: 'number', step: 0.05,
-        unit: 'mm', hint: 'Added to the tool offset for a clean edge.' },
+        unit: 'mm', hint: 'Added to the tool offset for a clean edge. Profile-in/out only.' },
       { key: 'toolOffsetOverride', label: 'Tool offset override', type: 'number', step: 0.1,
-        min: 0, unit: 'mm', hint: '0 = auto (tool radius + finishing allowance).' },
+        min: 0, unit: 'mm', hint: '0 = auto (tool radius + finishing allowance). Profile-in/out only.' },
       { key: 'plungeStyle', label: 'Plunge style', type: 'select', options: opts([
         { value: 'straight', label: 'Straight' }, { value: 'peck', label: 'Peck' },
         { value: 'helical', label: 'Helical / ramp' }]) },
@@ -202,7 +204,9 @@
 
   /* ---- state ---------------------------------------------------------- */
   var state = {
-    settings: Object.assign({}, DEFAULTS),
+    // graphics gets its own array — a plain Object.assign would alias
+    // DEFAULTS.graphics, and every added shape would pollute the defaults.
+    settings: Object.assign({}, DEFAULTS, { graphics: [] }),
     geometry: null, job: null, toolpath: null, validation: null,
     svgText: null, svgName: null, svgHash: null,
     bitmapMeta: null,
@@ -236,7 +240,7 @@
   }
 
   /* ---- form building -------------------------------------------------- */
-  function buildField(field, value, onChange) {
+  function buildField(field, value, onChange, defaults) {
     var row = el('div', 'field-row');
     if (field.type === 'textarea') row.classList.add('field-wide');
     row._field = field;
@@ -290,23 +294,42 @@
     function read() {
       if (field.type === 'checkbox') return input.checked;
       if (field.type === 'number') {
-        return input.value === '' ? null : parseFloat(input.value);
+        if (input.value === '') return null;
+        var v = parseFloat(input.value);
+        if (!isFinite(v)) return null;
+        // The HTML min/max attributes are advisory only — typed values land
+        // in state unclamped, where e.g. a DOC of 0 means "full depth in one
+        // pass" downstream. Enforce the schema bounds on the stored value.
+        if (field.min != null && v < field.min) v = field.min;
+        if (field.max != null && v > field.max) v = field.max;
+        return v;
       }
       if (field.type === 'select' && field.numeric) return parseFloat(input.value);
       return input.value;
     }
     var evt = (field.type === 'select' || field.type === 'checkbox') ? 'change' : 'input';
     input.addEventListener(evt, function () { onChange(field.key, read(), field); });
+    // A number field left empty stores null, and the pipeline would quietly
+    // substitute hard-coded fallbacks that differ from the documented
+    // defaults (e.g. finalDepth -1 instead of -3). Restore the default on
+    // blur — not on input, which would fight the user mid-edit.
+    if (field.type === 'number' && defaults && defaults[field.key] !== undefined) {
+      input.addEventListener('blur', function () {
+        if (input.value !== '' && isFinite(parseFloat(input.value))) return;
+        input.value = defaults[field.key];
+        onChange(field.key, read(), field);
+      });
+    }
 
     row._input = input;
     return row;
   }
 
-  function buildForm(container, schema, getValue, onChange) {
+  function buildForm(container, schema, getValue, onChange, defaults) {
     container.innerHTML = '';
     var map = {};
     schema.forEach(function (field) {
-      var row = buildField(field, getValue(field.key), onChange);
+      var row = buildField(field, getValue(field.key), onChange, defaults);
       map[field.key] = row;
       container.appendChild(row);
     });
@@ -620,9 +643,25 @@
       stencil: { threshold: 135, minArea: 30, simplify: 0.12 }
     };
     var cfg = map[name] || map.logo;
-    $('#bitmap-threshold').value = cfg.threshold;
-    $('#bitmap-min-area').value = cfg.minArea;
-    $('#bitmap-simplify').value = cfg.simplify;
+    state.settings.bitmapPreset = map[name] ? name : 'logo';
+    state.settings.bitmapThreshold = cfg.threshold;
+    state.settings.bitmapMinArea = cfg.minArea;
+    state.settings.bitmapSimplify = cfg.simplify;
+    syncBitmapControls();
+  }
+
+  /** Push the trace settings into the bitmap panel inputs (DOM ← state).
+      The params live in state.settings so they autosave and travel with
+      presets — MM-per-pixel sets the physical size of a traced sign, and
+      losing it between sessions silently resizes the next cut. */
+  function syncBitmapControls() {
+    var s = state.settings;
+    var set = function (id, v) { var n = $('#' + id); if (n && v != null) n.value = v; };
+    set('bitmap-preset', s.bitmapPreset);
+    set('bitmap-threshold', s.bitmapThreshold);
+    set('bitmap-mm-per-px', s.bitmapMmPerPx);
+    set('bitmap-min-area', s.bitmapMinArea);
+    set('bitmap-simplify', s.bitmapSimplify);
   }
 
   function setBitmapTraceBusy(on) {
@@ -675,10 +714,10 @@
   function traceBitmapNow() {
     if (!state.bitmapMeta || !state.bitmapMeta.bitmap || !Forge.BitmapTracer) return;
     var params = {
-      threshold: parseFloat($('#bitmap-threshold').value),
-      mmPerPixel: parseFloat($('#bitmap-mm-per-px').value),
-      minAreaPx: parseFloat($('#bitmap-min-area').value),
-      simplifyMm: parseFloat($('#bitmap-simplify').value)
+      threshold: parseFloat(state.settings.bitmapThreshold),
+      mmPerPixel: parseFloat(state.settings.bitmapMmPerPx),
+      minAreaPx: parseFloat(state.settings.bitmapMinArea),
+      simplifyMm: parseFloat(state.settings.bitmapSimplify)
     };
     if (!isFinite(params.threshold)) params.threshold = 145;
     params.threshold = Math.min(255, Math.max(1, params.threshold));
@@ -763,7 +802,9 @@
     createImageBitmap(file).then(function (bmp) {
       state.bitmapMeta = { name: file.name, size: file.size, width: bmp.width, height: bmp.height, bitmap: bmp };
       if (state.settings.jobName === 'job') state.settings.jobName = (file.name || 'bitmap').replace(/\.[^.]+$/, '');
-      applyBitmapPreset($('#bitmap-preset').value || 'logo');
+      // Keep the current trace parameters — re-applying the preset here
+      // would silently reset threshold/min-area/simplify tweaks (and with
+      // them the traced geometry) on every upload.
       showBitmapInfo(state.bitmapMeta);
       traceBitmapNow();
       preview.fit();
@@ -1330,14 +1371,27 @@
       ? state.material.notes : '';
     if (applyRecommended && state.material) {
       var m = state.material, s = state.settings;
-      if (m.recommended_feed_cut) s.feedCut = m.recommended_feed_cut;
-      if (m.recommended_feed_plunge) s.feedPlunge = m.recommended_feed_plunge;
-      if (m.recommended_doc_mm) s.docPerPass = m.recommended_doc_mm;
-      if (m.recommended_rpm) s.spindleRpm = m.recommended_rpm;
+      // Auto-fill silently replacing settings is how a deliberate partial
+      // depth becomes an accidental through-cut — say exactly what changed.
+      var applied = [];
+      function apply(key, val, label) {
+        if (s[key] === val) return;
+        s[key] = val;
+        applied.push(label + ' ' + val);
+      }
+      if (m.recommended_feed_cut) apply('feedCut', m.recommended_feed_cut, 'cut feed');
+      if (m.recommended_feed_plunge) apply('feedPlunge', m.recommended_feed_plunge, 'plunge feed');
+      if (m.recommended_doc_mm) apply('docPerPass', m.recommended_doc_mm, 'DOC');
+      if (m.recommended_rpm) apply('spindleRpm', m.recommended_rpm, 'RPM');
       if (m.thickness_mm > 0 && (s.operation === 'profile-out' || s.operation === 'drill')) {
-        s.finalDepth = -(m.thickness_mm + (m.through_cut_overage_mm || 0.65));
+        apply('finalDepth',
+          -Math.round((m.thickness_mm + (m.through_cut_overage_mm || 0.65)) * 100) / 100,
+          'final depth');
       }
       syncAllForms();
+      if (applied.length) {
+        toast('Applied ' + m.name + ' recommendations: ' + applied.join(', ') + '.');
+      }
     }
   }
 
@@ -1351,6 +1405,7 @@
     refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
     var ti = $('#text-input'); if (ti) ti.value = state.settings.textContent;
     var fs = $('#font-select'); if (fs) fs.value = state.settings.fontKey;
+    syncBitmapControls();
     setOperationUI(state.settings.operation);
   }
 
@@ -1391,6 +1446,11 @@
   }
 
   function openModal() {
+    // Recompute synchronously first — recompute()/rebuildText() are
+    // debounced, so a just-changed setting could otherwise pair fresh
+    // settings with a stale toolpath in the generated file.
+    if (state.settings.inputMode === 'text') rebuildTextNow();
+    else recomputeNow();
     if (!state.toolpath || !state.validation) return;
     if (state.validation.hasError) {
       toast('Resolve the blocking errors in pre-flight checks first.', 'error');
@@ -1442,20 +1502,35 @@
     }).catch(function (e) { toast('Save failed: ' + e.message, 'error'); });
   }
 
+  /**
+   * Copy stored settings over the live ones, key-filtered against DEFAULTS.
+   * Values are type-checked (a null or corrupt stored value must never
+   * silently replace a live number) and object values — the graphics array —
+   * are deep-copied so editing a shape can never mutate the stored source.
+   */
+  function applyStoredSettings(stored) {
+    if (!stored) return;
+    Object.keys(DEFAULTS).forEach(function (k) {
+      var v = stored[k];
+      if (v === undefined || v === null) return;
+      if (typeof v !== typeof DEFAULTS[k]) return;
+      if (typeof v === 'number' && !isFinite(v)) return;
+      state.settings[k] = (typeof v === 'object')
+        ? JSON.parse(JSON.stringify(v)) : v;
+    });
+  }
+
   function loadPreset() {
     var id = $('#preset-picker').value;
     if (!id) return;
     var p = state.presets.filter(function (x) { return String(x.id) === id; })[0];
     if (!p) return;
-    if (p.settings) {
-      Object.keys(DEFAULTS).forEach(function (k) {
-        if (p.settings[k] !== undefined) state.settings[k] = p.settings[k];
-      });
-    }
+    applyStoredSettings(p.settings);
     state.settings.operation = p.operation || state.settings.operation;
     if (p.bit_id) selectBit(p.bit_id);
     if (p.material_id) selectMaterial(p.material_id, false);
     syncAllForms();
+    renderGraphicsList();
     switchInputMode(state.settings.inputMode || 'text');
     toast('Preset "' + p.name + '" loaded.');
   }
@@ -1598,17 +1673,17 @@
   function wireUI() {
     /* settings forms */
     forms.operation = buildForm($('#form-operation'), SCHEMA.operation,
-      getSetting, onSettingChange);
-    forms.tabs = buildForm($('#form-tabs'), SCHEMA.tabs, getSetting, onSettingChange);
+      getSetting, onSettingChange, DEFAULTS);
+    forms.tabs = buildForm($('#form-tabs'), SCHEMA.tabs, getSetting, onSettingChange, DEFAULTS);
     forms.geometry = buildForm($('#form-geometry'), SCHEMA.geometry,
-      getSetting, onSettingChange);
+      getSetting, onSettingChange, DEFAULTS);
     forms.machine = buildForm($('#form-machine'), SCHEMA.machine,
-      getSetting, onSettingChange);
+      getSetting, onSettingChange, DEFAULTS);
     forms.bit = buildForm($('#form-bit'), BIT_SCHEMA,
       function () { return ''; }, onBitChange);
     forms.material = buildForm($('#form-material'), MATERIAL_SCHEMA,
       function () { return ''; }, onMaterialChange);
-    forms.text = buildForm($('#form-text'), TEXT_SCHEMA, getSetting, onSettingChange);
+    forms.text = buildForm($('#form-text'), TEXT_SCHEMA, getSetting, onSettingChange, DEFAULTS);
     refreshVisibility(forms.geometry, SCHEMA.geometry, state.settings);
     refreshVisibility(forms.text, TEXT_SCHEMA, state.settings);
     populateFontSelect();
@@ -1714,9 +1789,18 @@
     ['dragenter', 'dragover'].forEach(function (ev) { bdz.addEventListener(ev, function (e) { e.preventDefault(); bdz.classList.add('drag'); }); });
     ['dragleave', 'drop'].forEach(function (ev) { bdz.addEventListener(ev, function (e) { e.preventDefault(); bdz.classList.remove('drag'); }); });
     bdz.addEventListener('drop', function (e) { if (e.dataTransfer.files[0]) readBitmapFile(e.dataTransfer.files[0]); });
-    $('#bitmap-preset').addEventListener('change', function(){ applyBitmapPreset(this.value); if (state.settings.inputMode === 'bitmap') traceBitmapNow(); });
-    ['bitmap-threshold','bitmap-mm-per-px','bitmap-min-area','bitmap-simplify'].forEach(function(id){
-      var n = $("#" + id); if (n) n.addEventListener('input', debounce(function(){ if (state.settings.inputMode === 'bitmap') traceBitmapNow(); }, 120));
+    $('#bitmap-preset').addEventListener('change', function(){ applyBitmapPreset(this.value); autosave(); if (state.settings.inputMode === 'bitmap') traceBitmapNow(); });
+    var BITMAP_INPUT_KEYS = {
+      'bitmap-threshold': 'bitmapThreshold', 'bitmap-mm-per-px': 'bitmapMmPerPx',
+      'bitmap-min-area': 'bitmapMinArea', 'bitmap-simplify': 'bitmapSimplify'
+    };
+    Object.keys(BITMAP_INPUT_KEYS).forEach(function(id){
+      var n = $("#" + id);
+      if (n) n.addEventListener('input', debounce(function(){
+        var v = parseFloat(n.value);
+        if (isFinite(v)) { state.settings[BITMAP_INPUT_KEYS[id]] = v; autosave(); }
+        if (state.settings.inputMode === 'bitmap') traceBitmapNow();
+      }, 120));
     });
     $('#bitmap-trace-cancel').addEventListener('click', cancelBitmapTrace);
 
@@ -1835,9 +1919,8 @@
     loadLibrary().then(function () {
       var saved = Forge.store.load();
       if (saved && saved.settings) {
-        Object.keys(DEFAULTS).forEach(function (k) {
-          if (saved.settings[k] !== undefined) state.settings[k] = saved.settings[k];
-        });
+        applyStoredSettings(saved.settings);
+        renderGraphicsList();
       }
       if (state.bits.length) {
         var bId = saved && saved.bitId &&

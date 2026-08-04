@@ -47,6 +47,15 @@ function forge_db(): PDO
     $dir = forge_data_dir();
     if (!is_dir($dir)) {
         @mkdir($dir, 0775, true);
+        // The committed data/.htaccess denies web access on Apache. If an
+        // operator wipes data/ to reset, the recreated directory must get
+        // the same protection or saved gcode becomes directly downloadable.
+        if (is_dir($dir) && !is_file($dir . '/.htaccess')) {
+            @file_put_contents($dir . '/.htaccess',
+                "# LowRider Forge — keep the database and saved jobs off the web.\n"
+                . "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n"
+                . "<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
+        }
     }
     if (!is_dir($dir) || !is_writable($dir)) {
         throw new RuntimeException(
@@ -256,8 +265,8 @@ function forge_seed(PDO $db): void
 
         // --- Materials: a standard sign-shop set ---
         $materials = [
-            ['1.5" rigid insulation foam', 38.0, 'upcut', 18000, 3000, 1200, 12.0, 1.0,
-                'Soft — fast feeds fine. Watch for tear-out with dull bits.'],
+            ['1.5" rigid insulation foam', 38.0, 'upcut', 18000, 3000, 1200, 6.0, 1.0,
+                'Soft — fast feeds fine. Foam tolerates DOC beyond the bit diameter; raise it if you like. Watch for tear-out with dull bits.'],
             ['PVC foam board (Sintra) 3mm', 3.0, 'O-flute', 16000, 2500, 800, 2.0, 0.5,
                 'Easy to cut and engrave. A single-flute O-flute keeps edges clean.'],
             ['PVC foam board (Sintra) 6mm', 6.0, 'O-flute', 16000, 2200, 700, 2.5, 0.5,
@@ -276,10 +285,10 @@ function forge_seed(PDO $db): void
                 'Measure your actual thickness before cutting; nominal 1/4" plywood is often 5.5-6.0mm.'],
             ['1/2" plywood', 12.7, 'upcut', 18000, 1800, 600, 3.0, 0.65,
                 'Measure actual thickness; voids possible in cheaper ply.'],
-            ['Baltic birch plywood 6mm', 6.0, 'compression', 18000, 2000, 700, 3.0, 0.6,
-                'Void-free premium ply. A compression bit leaves both faces clean.'],
-            ['Baltic birch plywood 12mm', 12.0, 'compression', 18000, 1800, 600, 3.0, 0.6,
-                'Premium ply for sign blanks. Compression bit for clean faces.'],
+            ['Baltic birch plywood 6mm', 6.0, 'compression', 18000, 2000, 700, 4.0, 0.6,
+                'Void-free premium ply. A compression bit leaves both faces clean — the first pass must reach past the up-cut tip (~3-4mm), hence the deeper DOC.'],
+            ['Baltic birch plywood 12mm', 12.0, 'compression', 18000, 1800, 600, 4.0, 0.6,
+                'Premium ply for sign blanks. Compression bit for clean faces — first pass must reach past the up-cut tip (~3-4mm).'],
             ['1/4" MDF', 6.35, 'upcut', 18000, 2200, 800, 3.0, 0.65,
                 'Dusty. Nominal thickness usually accurate to +/-0.2mm.'],
             ['1/4" hardboard', 6.35, 'upcut', 18000, 2000, 700, 3.0, 0.65,
@@ -294,8 +303,8 @@ function forge_seed(PDO $db): void
                 'Dense hardwood for routed signs. A climb-mill final pass leaves a clean edge.'],
             ['Cedar sign board', 19.0, 'upcut', 16000, 2400, 800, 4.0, 0.6,
                 'Soft and forgiving for carved signs. Watch for fuzzy grain with dull bits.'],
-            ['6061-T6 aluminium 3mm', 3.0, 'upcut', 18000, 800, 250, 0.5, 0.3,
-                'Slow feeds, shallow DOC. Use lubricant. Single-flute aluminium bit.'],
+            ['6061-T6 aluminium 3mm', 3.0, 'upcut', 11000, 800, 250, 0.5, 0.3,
+                'Slow feeds, shallow DOC, LOW RPM (Makita dial 1-2) — 18k+ RPM dry-cutting 6061 welds chips and snaps bits. Use lubricant. Single-flute aluminium bit.'],
         ];
         $stmt = $db->prepare('INSERT OR IGNORE INTO materials
             (name,thickness_mm,recommended_bit_type,recommended_rpm,recommended_feed_cut,
@@ -314,28 +323,34 @@ function forge_seed(PDO $db): void
         };
 
         $now = time();
+        // Exact seed names — a LIKE '%…%' lookup silently rebinds a preset
+        // to whichever row happens to match first when the library grows.
         $presets = [
             ['Foam dimensional engrave',
-                $idOf($db, 'bits', '1/8" 2-flute upcut'),
-                $idOf($db, 'materials', 'foam'),
+                $idOf($db, 'bits', '1/8" 2-flute upcut (detail wood, SpeTool W04021)'),
+                $idOf($db, 'materials', '1.5" rigid insulation foam'),
                 'engrave',
                 ['finalDepth' => -4, 'docPerPass' => 4, 'feedCut' => 2000, 'feedPlunge' => 800]],
             ['Plywood profile cut with tabs',
-                $idOf($db, 'bits', '1/8" 2-flute upcut'),
+                $idOf($db, 'bits', '1/8" 2-flute upcut (detail wood, SpeTool W04021)'),
                 $idOf($db, 'materials', '1/4" plywood'),
                 'profile-out',
                 ['finalDepth' => -7, 'docPerPass' => 3, 'feedCut' => 2000, 'feedPlunge' => 700,
                  'tabsEnabled' => true, 'tabCount' => 4, 'tabThickness' => 1.5, 'tabWidth' => 6]],
             ['HDPE 2-color sign engrave',
-                $idOf($db, 'bits', '1/8" single-flute O-flute'),
-                $idOf($db, 'materials', '2-color HDPE'),
+                $idOf($db, 'bits', '1/8" single-flute O-flute (plastic detail)'),
+                $idOf($db, 'materials', '2-color HDPE (engraving stock)'),
                 'engrave',
                 ['finalDepth' => -0.5, 'docPerPass' => 0.5, 'feedCut' => 1500, 'feedPlunge' => 500]],
+            // RPM and plunge style are pinned here: aluminium is the one
+            // material where inheriting a wood job's 18k+ RPM straight
+            // plunge welds chips and snaps the bit.
             ['Aluminium 6061 profile',
-                $idOf($db, 'bits', 'aluminium'),
-                $idOf($db, 'materials', '6061'),
+                $idOf($db, 'bits', '1/4" single-flute aluminium'),
+                $idOf($db, 'materials', '6061-T6 aluminium 3mm'),
                 'profile-out',
                 ['finalDepth' => -3.3, 'docPerPass' => 0.5, 'feedCut' => 800, 'feedPlunge' => 250,
+                 'spindleRpm' => 11000, 'plungeStyle' => 'peck',
                  'tabsEnabled' => true, 'tabCount' => 6, 'tabThickness' => 1.0, 'tabWidth' => 6]],
         ];
         $stmt = $db->prepare('INSERT OR IGNORE INTO presets

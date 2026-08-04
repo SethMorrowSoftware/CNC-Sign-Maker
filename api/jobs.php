@@ -13,6 +13,13 @@ function safe_gcode_name(string $name): string
     if ($name === '') {
         $name = 'job';
     }
+    // Cap the length: "id_" + name must stay under NAME_MAX (255 bytes) or
+    // file_put_contents fails with ENAMETOOLONG and a misleading
+    // permissions error. 120 chars leaves ample headroom.
+    if (strlen($name) > 120) {
+        $name = substr($name, 0, 120);
+        $name = rtrim($name, '._-');
+    }
     if (!preg_match('/\.gcode$/i', $name)) {
         $name .= '.gcode';
     }
@@ -58,8 +65,17 @@ function handle_jobs(string $method, ?int $id, ?string $action): void
 
         $stored = $jobId . '_' . $filename;
         $path   = forge_data_dir() . '/jobs/' . $stored;
-        if (file_put_contents($path, $gcode) === false) {
-            json_response(['error' => 'Could not write gcode file (check data/jobs permissions)'], 500);
+        // A partial write (disk quota hit mid-write) returns a short byte
+        // count, not false — a truncated gcode file that ends mid-move would
+        // halt the machine at depth. Verify the full length landed, and
+        // remove the orphaned row + partial file on failure.
+        $written = file_put_contents($path, $gcode);
+        if ($written === false || $written !== strlen($gcode)) {
+            @unlink($path);
+            $db->prepare('DELETE FROM jobs WHERE id = ?')->execute([$jobId]);
+            json_response(['error' => $written === false
+                ? 'Could not write gcode file (check data/jobs permissions)'
+                : 'Gcode file was only partially written (disk full?) — save aborted'], 500);
         }
         $db->prepare('UPDATE jobs SET gcode_path = ? WHERE id = ?')->execute([$stored, $jobId]);
 
