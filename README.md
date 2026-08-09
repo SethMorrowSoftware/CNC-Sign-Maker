@@ -203,7 +203,7 @@ Below the text controls, the shape builder adds reusable parametric vector
 graphics to the sign — all sized in millimetres:
 
 - **Shapes** — rectangle, rounded rectangle, ellipse, circle, triangle,
-  pentagon, hexagon, octagon, diamond, star, arrows (left/right), cross/plus,
+  pentagon, hexagon, octagon, diamond, star, arrows (left/right/up/down), cross/plus,
   chevron, trapezoid, parallelogram, banner/ribbon, heart, gear and
   lightning bolt — plus matching **border** variants (rectangular, rounded,
   ellipse, hexagon, pill, ring).

@@ -999,7 +999,12 @@
 
   function autoFitGraphic(g, keepRatio, silent) {
     if (!g) return;
-    var isBorderShape = g.shape === 'borderRect' || g.shape === 'ring' || g.shape === 'roundedBorderRect';
+    // Read the border flag off the shape library rather than matching a
+    // hard-coded list — that list only named three of the six border shapes,
+    // so auto-fitting an ellipse/hexagon/pill border shrank it by the text
+    // padding while the other three filled the frame.
+    var shapeDef = Forge.shapes && Forge.shapes.SHAPES ? Forge.shapes.SHAPES[g.shape] : null;
+    var isBorderShape = !!(shapeDef && shapeDef.border);
     var i = signInterior(isBorderShape);
     var targetW = i.width;
     var targetH = i.height;
