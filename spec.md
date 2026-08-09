@@ -662,7 +662,7 @@ Test SVGs shipped in `samples/`:
 
 ## 19. Implementation Status
 
-This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing (via `importScripts` of `bitmap-tracer.js` so the algorithm lives in one file) with stale-run protection, six operation modes, and the current tab behavior (even placement, material-aware Z anchoring on through-cuts). The seeded library ships 19 bits, 20 materials and 4 sample presets (see `api/db.php`), and the shape builder offers 20 base shapes plus 6 border variants (see `js/shapes.js`).
+This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing (via `importScripts` of `bitmap-tracer.js` so the algorithm lives in one file) with stale-run protection, six operation modes, and the current tab behavior (even placement, material-aware Z anchoring on through-cuts). The seeded library ships 19 bits, 20 materials and 4 sample presets (see `api/db.php`), and the shape builder offers 22 base shapes plus 6 border variants (see `js/shapes.js`).
 
 ### Recent hardening pass (post-audit)
 
