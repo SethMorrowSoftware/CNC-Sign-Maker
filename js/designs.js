@@ -154,10 +154,22 @@
     if (!current.shareToken) { saveAsNew(); return; }
     var name = promptName(current.name ? current.name + ' (copy)' : null);
     if (!name) return;
-    // Copy server-side: the artwork is already in the database, so there is
-    // no reason to push megabytes back up through the browser.
-    Forge.api.copyShared(current.shareToken, { name: name }).then(function (d) {
+
+    // Two steps on purpose. The copy is made server-side because the artwork
+    // is already in the database and there is no reason to push megabytes
+    // back up through the browser — but that clones the *owner's* settings,
+    // and the viewer may well have retuned depth or feeds for their own stock
+    // before saving. The follow-up write puts what is actually on screen into
+    // the copy; without it the save would report success and then silently
+    // reopen with the owner's numbers.
+    Forge.api.copyShared(current.shareToken, { name: name }).then(function (copy) {
+      // Omitting `assets` where nothing changed leaves the copied artwork
+      // untouched, so this second call carries settings only.
+      var kinds = copy.assets ? Object.keys(copy.assets) : [];
+      return Forge.api.updateDesign(copy.id, buildPayload(copy.name, kinds));
+    }).then(function (d) {
       Forge.app.setReadOnly(false);
+      Forge.app.markSourceSaved();
       setCurrent(d);
       toast('Saved to your designs as "' + d.name + '".');
     }).catch(function (e) { Forge.app.apiFailed('Copy failed', e); });

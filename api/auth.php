@@ -381,6 +381,48 @@ function forge_check_password(string $pw): void
     }
 }
 
+/**
+ * A throwaway hash to verify against when the email has no account, so that a
+ * sign-in attempt costs the same whether or not the address is registered.
+ *
+ * Two things make this fiddly enough to be worth spelling out.
+ *
+ * It cannot be a literal. A hard-coded string pins the bcrypt cost, and PHP
+ * has moved it — 8.4 defaults to 12 — so a cost-10 literal makes this path
+ * roughly four times faster than a real verify and hands an attacker the
+ * account-enumeration oracle the dummy exists to close. A malformed literal is
+ * worse still: password_verify() rejects it outright and returns in microseconds.
+ *
+ * It also cannot be generated per request. PHP is shared-nothing, so a static
+ * does not survive between requests in any SAPI — computing it each time makes
+ * the unknown-email path a hash *plus* a verify, twice the work of a real one,
+ * which leaks just as loudly in the other direction.
+ *
+ * So it is generated once and kept in `meta`, and regenerated only when
+ * password_needs_rehash() says the cost has moved under it — after a PHP
+ * upgrade, say. Steady state is one small SELECT and one verify.
+ */
+function forge_dummy_hash(PDO $db): string
+{
+    try {
+        $s = $db->prepare("SELECT `value` FROM meta WHERE `key` = 'dummy_hash'");
+        $s->execute();
+        $hash = (string) ($s->fetchColumn() ?: '');
+        if ($hash !== '' && !password_needs_rehash($hash, PASSWORD_DEFAULT)) {
+            return $hash;
+        }
+        $hash = password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT);
+        $db->prepare("INSERT INTO meta (`key`, `value`) VALUES ('dummy_hash', ?)
+            ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)")->execute([$hash]);
+        return $hash;
+    } catch (Throwable $e) {
+        // Never fail a sign-in over this. Hashing inline is slower than the
+        // stored path, but it is still a real bcrypt at the right cost.
+        error_log('LowRider Forge: dummy hash unavailable — ' . $e->getMessage());
+        return password_hash('forge/no-such-account', PASSWORD_DEFAULT);
+    }
+}
+
 /** Shape a users row for the client. Never includes the password hash. */
 function forge_public_user(array $u): array
 {
@@ -451,10 +493,9 @@ function handle_auth(string $method, ?string $action): void
             $s->execute([$email]);
             $user = $s->fetch();
 
-            // Hash even when the account does not exist, so the response time
-            // does not tell an attacker which addresses are registered.
-            $hash = $user ? (string) $user['password_hash']
-                          : '$2y$10$usesomesillystringfooooooooooooooooooooooooooooooooooooooo';
+            // Verify even when the account does not exist, so the response
+            // time does not tell an attacker which addresses are registered.
+            $hash = $user ? (string) $user['password_hash'] : forge_dummy_hash($db);
             $ok = password_verify($pw, $hash) && $user && (int) $user['disabled'] === 0;
 
             if (!$ok) {

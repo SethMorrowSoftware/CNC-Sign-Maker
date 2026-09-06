@@ -1363,6 +1363,41 @@
     if (current != null) sel.value = current;
   }
 
+  /**
+   * Re-point the active bit and material at the freshly loaded library.
+   *
+   * The picker options are rebuilt on every library load, but state.bit and
+   * state.material are plain copies taken at selection time. Signing out — or
+   * deleting the row — removes the option without touching them, so the panel
+   * would show one tool while prepareJob/build silently compensated for
+   * another. On a CNC tool that is a wrong-diameter offset, not a cosmetic
+   * mismatch, so a vanished selection is replaced *and* announced.
+   */
+  function reconcileSelection() {
+    function fix(kind, list, selected, select) {
+      if (!selected || selected.id == null) return;
+      var still = list.filter(function (r) {
+        return String(r.id) === String(selected.id);
+      })[0];
+      if (still) {
+        // Present, but its values may have changed under us — another device,
+        // or a fork. Re-select so the form and the toolpath use the new row.
+        select(still.id);
+        return;
+      }
+      select(list.length ? list[0].id : null);
+      toast(list.length
+        ? '"' + selected.name + '" is no longer in your ' + kind + ' library — '
+          + 'switched to "' + list[0].name + '". Check it before cutting.'
+        : 'The ' + kind + ' this job used is no longer available.', 'warn');
+    }
+
+    fix('bit', state.bits, state.bit, selectBit);
+    fix('material', state.materials, state.material, function (id) {
+      selectMaterial(id, false);
+    });
+  }
+
   function loadLibrary() {
     return Promise.all([
       Forge.api.listBits(), Forge.api.listMaterials(), Forge.api.listPresets()
@@ -1383,6 +1418,7 @@
         o.value = p.id;
         pp.appendChild(o);
       });
+      reconcileSelection();
     }).catch(function (e) {
       state.serverUp = false;
       $('#server-status').textContent = 'offline — presets disabled';
@@ -1639,11 +1675,10 @@
       if (!window.confirm('Delete bit "' + state.bit.name + '"?')) return;
       Forge.api.deleteBit(state.bit.id).then(function () {
         toast('Bit deleted.');
+        // loadLibrary() re-points the selection at a surviving row itself.
         return loadLibrary();
-      }).then(function () {
-        if (state.bits[0]) selectBit(state.bits[0].id);
-        recomputeNow();
-      }).catch(function (e) { apiFailed('Delete failed', e); });
+      }).then(recomputeNow)
+        .catch(function (e) { apiFailed('Delete failed', e); });
     });
 
     $('#material-update').addEventListener('click', function () {
@@ -1672,11 +1707,10 @@
       if (!window.confirm('Delete material "' + state.material.name + '"?')) return;
       Forge.api.deleteMaterial(state.material.id).then(function () {
         toast('Material deleted.');
+        // loadLibrary() re-points the selection at a surviving row itself.
         return loadLibrary();
-      }).then(function () {
-        if (state.materials[0]) selectMaterial(state.materials[0].id, false);
-        recomputeNow();
-      }).catch(function (e) { apiFailed('Delete failed', e); });
+      }).then(recomputeNow)
+        .catch(function (e) { apiFailed('Delete failed', e); });
     });
   }
 

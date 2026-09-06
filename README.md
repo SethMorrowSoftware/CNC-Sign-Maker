@@ -86,7 +86,10 @@ persist.
 
 ## Requirements
 
-- **PHP 8.1+** with the `pdo_mysql` extension (bundled with most PHP builds).
+- **PHP 8.1+** with the `pdo_mysql` and `mbstring` extensions. Both are
+  standard on cPanel but neither is compiled into PHP by default — tick them
+  under *Select PHP Version → Extensions* if a fresh install reports one
+  missing.
 - **MySQL 5.7+ or MariaDB 10.3+** — a database and a user with full privileges
   on it. Every cPanel plan has this; create both under *MySQL Databases*.
 - A modern browser — Chrome, Firefox, Edge or Safari (ES2020+).
@@ -790,8 +793,8 @@ samples/                  Test SVGs (square, circle, holes plate, text)
   info panel flags files with no physical units.
 - **"Backend unavailable".** gcode generation still works fully — only
   accounts, designs and library storage need PHP. Check that the `pdo_mysql`
-  extension is enabled (cPanel → *Select PHP Version* → *Extensions*). The tool
-  surfaces the exact cause in the error toast.
+  and `mbstring` extensions are enabled (cPanel → *Select PHP Version* →
+  *Extensions*). The tool names the missing one in the error toast.
 - **"Could not connect to MySQL".** The message repeats what the driver said.
   On cPanel both the database name and the user name carry your account prefix
   (`myaccount_forge`), and the user must be added to the database with ALL

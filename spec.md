@@ -19,8 +19,9 @@ A self-hosted web application for reliably converting text, SVG, and bitmap geom
 - LocalStorage for in-session preset autosave.
 
 **Backend:**
-- PHP 8.1+ (no framework needed — keep it simple). No Composer: nothing here
-  may depend on a package manager, because the target host has no shell.
+- PHP 8.1+ with `pdo_mysql` and `mbstring` (neither is compiled in by
+  default; both are standard on cPanel). No Composer: nothing here may depend
+  on a package manager, because the target host has no shell.
 - MySQL 5.7+ / MariaDB 10.3+ for accounts, saved designs, share links and the
   preset/material/bit library. (Through v1 this was SQLite; v2 moved to MySQL
   when the tool became multi-user — see section 20.)

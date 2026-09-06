@@ -16,11 +16,13 @@ fi
 PHP_VER=$(php -r 'echo PHP_VERSION;')
 echo "PHP version: $PHP_VER"
 
-if ! php -m | grep -qi pdo_mysql; then
-  echo "ERROR: the PHP pdo_mysql extension is required." >&2
-  echo "       In cPanel: 'Select PHP Version' -> Extensions -> tick pdo_mysql." >&2
-  exit 1
-fi
+for ext in pdo_mysql mbstring; do
+  if ! php -m | grep -qix "$ext"; then
+    echo "ERROR: the PHP $ext extension is required." >&2
+    echo "       In cPanel: 'Select PHP Version' -> Extensions -> tick $ext." >&2
+    exit 1
+  fi
+done
 
 # 2. Credentials
 if [ ! -f api/config.php ]; then

@@ -157,6 +157,35 @@ CSRFA=$(curl -s -b "$A" "$BASE?r=auth/me" | jq csrf)
 curl -s -b "$A" -X POST -H "X-Forge-CSRF: $CSRFA" -H 'Content-Type: application/json' -d '{}' "$BASE?r=auth/logout" >/dev/null
 check "session gone after logout" "401" "$(curl -s -o /dev/null -w '%{http_code}' -b "$A" "$BASE?r=designs")"
 
+echo "== 12. an unknown email is not distinguishable by timing =="
+# The nonexistent-account path must verify against a dummy hash generated with
+# the live PASSWORD_DEFAULT. A hard-coded literal pins the bcrypt cost (PHP 8.4
+# moved it to 12) and makes this path several times faster, which enumerates
+# accounts one request at a time.
+${FORGE_MYSQL:-mariadb -uroot forge} -e "DELETE FROM auth_throttle" 2>/dev/null
+echo '{"email":"nobody-at-all@example.com","password":"wrong-password-here"}' > "$SCR/unknown.json"
+echo '{"email":"admin@example.com","password":"wrong-password-here"}' > "$SCR/known.json"
+# Warm up: the first unknown-email attempt in a worker also generates the dummy.
+curl -s -o /dev/null "$BASE?r=auth/login" -X POST -H 'Content-Type: application/json' --data-binary "@$SCR/unknown.json"
+timed() {
+  local total=0 t
+  for _ in 1 2 3; do
+    t=$(curl -s -o /dev/null -w '%{time_total}' "$BASE?r=auth/login" \
+        -X POST -H 'Content-Type: application/json' --data-binary "@$1")
+    total=$(python3 -c "print($total + $t)")
+  done
+  python3 -c "print($total / 3)"
+}
+T_KNOWN=$(timed "$SCR/known.json")
+T_UNKNOWN=$(timed "$SCR/unknown.json")
+RATIO=$(python3 -c "print(round(max($T_KNOWN,$T_UNKNOWN) / max(min($T_KNOWN,$T_UNKNOWN), 1e-6), 2))")
+if python3 -c "import sys; sys.exit(0 if $RATIO < 1.5 else 1)"; then
+  PASS=$((PASS+1)); echo "  ok   known and unknown emails take similar time (ratio ${RATIO}x)"
+else
+  FAIL=$((FAIL+1)); echo "  FAIL timing leaks account existence: known ${T_KNOWN}s vs unknown ${T_UNKNOWN}s (${RATIO}x)"
+fi
+${FORGE_MYSQL:-mariadb -uroot forge} -e "DELETE FROM auth_throttle" 2>/dev/null
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

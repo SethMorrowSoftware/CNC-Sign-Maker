@@ -119,6 +119,16 @@ function forge_db(): PDO
             . '"Select PHP Version" and tick the pdo_mysql (or mysqlnd) extension.'
         );
     }
+    // mbstring is not compiled into PHP by default. Email addresses, display
+    // names and every clamped string go through mb_* functions, so without it
+    // the first sign-up dies on an undefined function and returns a bare 500.
+    // Name the missing extension the way the pdo_mysql check does instead.
+    if (!extension_loaded('mbstring')) {
+        throw new RuntimeException(
+            'The PHP "mbstring" extension is not enabled. In cPanel, open '
+            . '"Select PHP Version" and tick mbstring.'
+        );
+    }
 
     $cfg = forge_config();
     if ($cfg['db_name'] === '' || $cfg['db_user'] === '') {
