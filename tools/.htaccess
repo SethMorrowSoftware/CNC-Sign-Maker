@@ -1,0 +1,10 @@
+# LowRider Forge — the maintenance scripts are command-line only.
+# They refuse to run over HTTP on their own (each checks PHP_SAPI), but there
+# is no reason for them to be reachable from the web at all.
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>

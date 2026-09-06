@@ -19,15 +19,21 @@ A self-hosted web application for reliably converting text, SVG, and bitmap geom
 - LocalStorage for in-session preset autosave.
 
 **Backend:**
-- PHP 8.1+ (no framework needed — keep it simple).
-- SQLite for preset/material/bit storage (single-file DB, zero setup).
+- PHP 8.1+ (no framework needed — keep it simple). No Composer: nothing here
+  may depend on a package manager, because the target host has no shell.
+- MySQL 5.7+ / MariaDB 10.3+ for accounts, saved designs, share links and the
+  preset/material/bit library. (Through v1 this was SQLite; v2 moved to MySQL
+  when the tool became multi-user — see section 20.)
 - File I/O for gcode artifacts (optional persistence; primary delivery is download).
+- Authentication is hand-rolled on PHP's own primitives — `password_hash`,
+  `random_bytes`, `hash_equals`. They are sufficient, and a vendored auth
+  library would violate the no-package-manager constraint above.
 
 **Geometry libraries:**
 - Client-side: a polygon offsetting library is mandatory. Recommended: a JS port of the Clipper library (e.g. `clipper-lib` or `polygon-clipping`). Hand-rolling polygon offset is a trap — corners and self-intersections are non-trivial.
 - SVG path parsing: write a small parser for `M / L / H / V / C / S / Q / T / A / Z` commands. Treat curves by tessellating into line segments at a controllable tolerance (default 0.1mm).
 
-**Why this stack:** Vanilla JS keeps the project alive across years without framework churn. PHP is the lowest-friction backend for a hobbyist-grade web app on a shared host. SQLite eliminates database setup.
+**Why this stack:** Vanilla JS keeps the project alive across years without framework churn. PHP is the lowest-friction backend for a hobbyist-grade web app on a shared host. MySQL is the one database every shared-hosting plan already provides a control panel for, and unlike SQLite it does not depend on file locking over NFS home directories.
 
 ## 3. Architecture
 
@@ -55,13 +61,16 @@ A self-hosted web application for reliably converting text, SVG, and bitmap geom
 │                    │  Download .gcode                          │
 │                    └───────────────┘                           │
 └───────────────┬─────────────────────────────────────────────────┘
-                │ HTTP (only for preset persistence)
+                │ HTTP (only for persistence — never for geometry)
                 ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │                            PHP                                  │
+│  /api/auth  /api/designs  /api/shared  /api/invites  /api/users │
 │  /api/presets  /api/materials  /api/bits  /api/jobs/save        │
 │                            ↓                                    │
-│                        SQLite DB                                │
+│                          MySQL                                  │
+│   users · sessions · invites · designs · design_assets ·        │
+│   design_shares · bits · materials · presets · jobs             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -425,78 +434,255 @@ clear even when the descent begins deep inside an existing hole on pass 2+.
 | Bitmap trace > 120k nodes | Warn — preview and cut will be slow |
 | Spindle RPM far from material recommendation | Info |
 
-## 11. Data Model (SQLite)
+## 11. Data Model (MySQL)
+
+Column widths are deliberate: anything carrying an index is at most
+`VARCHAR(190)`, because utf8mb4 costs 4 bytes per character and MySQL 5.7 /
+MariaDB caps an index prefix at 767 bytes. `owner_id` is a plain column rather
+than a foreign key on the library tables so that owner **0** — the built-in,
+read-only library shipped with the tool — can exist with no matching `users`
+row. See section 20 for the ownership rules.
 
 ```sql
+CREATE TABLE users (
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    email         VARCHAR(190) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,     -- password_hash(), bcrypt
+    display_name  VARCHAR(120) NOT NULL,
+    role          VARCHAR(16)  NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
+    disabled      TINYINT(1)   NOT NULL DEFAULT 0,
+    created_at    INT UNSIGNED NOT NULL,
+    updated_at    INT UNSIGNED NOT NULL,
+    last_login_at INT UNSIGNED NULL,
+    UNIQUE KEY uq_users_email (email)
+);
+
+-- Sessions live here, not in PHP's session storage: on shared hosting that is
+-- often a /tmp readable by every account on the box. Only the SHA-256 of the
+-- cookie's token is stored, so a database read cannot be replayed as a login.
+CREATE TABLE sessions (
+    token_hash   CHAR(64) PRIMARY KEY,
+    user_id      INT UNSIGNED NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    csrf_token   CHAR(43) NOT NULL,
+    created_at   INT UNSIGNED NOT NULL,
+    last_seen_at INT UNSIGNED NOT NULL,
+    expires_at   INT UNSIGNED NOT NULL,
+    user_agent   VARCHAR(255) NULL,
+    ip           VARCHAR(45)  NULL
+);
+
+CREATE TABLE invites (
+    id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    token      VARCHAR(64)  NOT NULL,
+    email      VARCHAR(190) NULL,      -- when set, only this address may use it
+    role       VARCHAR(16)  NOT NULL DEFAULT 'user',
+    note       VARCHAR(255) NULL,
+    created_by INT UNSIGNED NULL,
+    created_at INT UNSIGNED NOT NULL,
+    expires_at INT UNSIGNED NULL,
+    used_at    INT UNSIGNED NULL,
+    used_by    INT UNSIGNED NULL,
+    revoked_at INT UNSIGNED NULL,
+    UNIQUE KEY uq_invites_token (token)
+);
+
+-- Failed-login throttle, one row per bucket ("login:ip:…" / "login:email:…"),
+-- so brute-force protection needs no Redis.
+CREATE TABLE auth_throttle (
+    bucket       VARCHAR(190) PRIMARY KEY,
+    attempts     INT UNSIGNED NOT NULL DEFAULT 0,
+    first_at     INT UNSIGNED NOT NULL,
+    last_at      INT UNSIGNED NOT NULL,
+    locked_until INT UNSIGNED NULL
+);
+
 CREATE TABLE bits (
-    id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
-    diameter_mm REAL NOT NULL,
-    shank_diameter_mm REAL,
-    flute_count INTEGER NOT NULL,
-    cutting_length_mm REAL,
-    type TEXT NOT NULL,
-    notes TEXT
+    id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    owner_id          INT UNSIGNED NOT NULL DEFAULT 0,   -- 0 = built-in library
+    name              VARCHAR(190) NOT NULL,
+    diameter_mm       DOUBLE NOT NULL,
+    shank_diameter_mm DOUBLE NULL,
+    flute_count       INT NOT NULL DEFAULT 2,
+    cutting_length_mm DOUBLE NULL,
+    type              VARCHAR(32) NOT NULL DEFAULT 'upcut',
+    v_angle_deg       DOUBLE NULL,
+    notes             TEXT NULL,
+    UNIQUE KEY uq_bits_owner_name (owner_id, name)
 );
 
 CREATE TABLE materials (
-    id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
-    thickness_mm REAL,
-    recommended_rpm INTEGER,
-    recommended_feed_cut INTEGER,
-    recommended_feed_plunge INTEGER,
-    recommended_doc_mm REAL,
-    through_cut_overage_mm REAL DEFAULT 0.65,
-    notes TEXT
+    id                      INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    owner_id                INT UNSIGNED NOT NULL DEFAULT 0,
+    name                    VARCHAR(190) NOT NULL,
+    thickness_mm            DOUBLE NULL,
+    recommended_bit_type    VARCHAR(32) NULL,
+    recommended_rpm         INT NULL,
+    recommended_feed_cut    INT NULL,
+    recommended_feed_plunge INT NULL,
+    recommended_doc_mm      DOUBLE NULL,
+    through_cut_overage_mm  DOUBLE NULL DEFAULT 0.65,
+    notes                   TEXT NULL,
+    UNIQUE KEY uq_materials_owner_name (owner_id, name)
 );
 
+-- Machining settings only. UNIQUE is on (owner_id, name), not name: through
+-- v1 "Save preset" upserted by name globally, so with two accounts one user
+-- saving "My preset" silently overwrote the other's.
 CREATE TABLE presets (
-    id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
-    bit_id INTEGER REFERENCES bits(id),
-    material_id INTEGER REFERENCES materials(id),
-    operation TEXT NOT NULL,
-    settings_json TEXT NOT NULL,
-    created_at INTEGER,
-    updated_at INTEGER
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    owner_id      INT UNSIGNED NOT NULL DEFAULT 0,
+    name          VARCHAR(190) NOT NULL,
+    bit_id        INT UNSIGNED NULL REFERENCES bits(id) ON DELETE SET NULL,
+    material_id   INT UNSIGNED NULL REFERENCES materials(id) ON DELETE SET NULL,
+    operation     VARCHAR(32) NOT NULL,
+    settings_json MEDIUMTEXT NOT NULL,
+    created_at    INT UNSIGNED NULL,
+    updated_at    INT UNSIGNED NULL,
+    UNIQUE KEY uq_presets_owner_name (owner_id, name)
+);
+
+-- The whole working document: settings plus the artwork needed to rebuild
+-- identical geometry. The heavy bytes live in design_assets so that listing
+-- "My designs" never drags megabytes across the wire.
+CREATE TABLE designs (
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    owner_id      INT UNSIGNED NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name          VARCHAR(190) NOT NULL,
+    input_mode    VARCHAR(16) NOT NULL DEFAULT 'text',   -- text | svg | bitmap
+    operation     VARCHAR(32) NOT NULL DEFAULT 'engrave',
+    bit_id        INT UNSIGNED NULL,
+    material_id   INT UNSIGNED NULL,
+    settings_json MEDIUMTEXT NOT NULL,
+    svg_hash      VARCHAR(64) NULL,
+    notes         TEXT NULL,
+    copied_from   INT UNSIGNED NULL,
+    created_at    INT UNSIGNED NOT NULL,
+    updated_at    INT UNSIGNED NOT NULL,
+    UNIQUE KEY uq_designs_owner_name (owner_id, name),
+    KEY idx_designs_owner_updated (owner_id, updated_at)
+);
+
+-- kind: 'svg' (source text), 'bitmap' (the original image bytes) or 'font'
+-- (an uploaded face). LONGBLOB, not LONGTEXT: two of the three are binary.
+CREATE TABLE design_assets (
+    id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    design_id  INT UNSIGNED NOT NULL REFERENCES designs(id) ON DELETE CASCADE,
+    kind       VARCHAR(16)  NOT NULL,
+    asset_key  VARCHAR(190) NULL,      -- the settings.fontKey a font restores as
+    filename   VARCHAR(255) NULL,
+    mime       VARCHAR(100) NULL,
+    byte_size  INT UNSIGNED NOT NULL DEFAULT 0,
+    sha256     CHAR(64) NULL,
+    data       LONGBLOB NOT NULL,
+    created_at INT UNSIGNED NOT NULL,
+    UNIQUE KEY uq_assets_design_kind (design_id, kind)
+);
+
+CREATE TABLE design_shares (
+    id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    design_id      INT UNSIGNED NOT NULL REFERENCES designs(id) ON DELETE CASCADE,
+    token          VARCHAR(64) NOT NULL,   -- 43 chars of base64url over 32 bytes
+    created_by     INT UNSIGNED NULL,
+    created_at     INT UNSIGNED NOT NULL,
+    expires_at     INT UNSIGNED NULL,
+    revoked_at     INT UNSIGNED NULL,
+    view_count     INT UNSIGNED NOT NULL DEFAULT 0,
+    last_viewed_at INT UNSIGNED NULL,
+    UNIQUE KEY uq_shares_token (token)
 );
 
 CREATE TABLE jobs (
-    id INTEGER PRIMARY KEY,
-    filename TEXT NOT NULL,
-    preset_id INTEGER REFERENCES presets(id),
-    svg_hash TEXT NOT NULL,
-    gcode_path TEXT,
-    settings_json TEXT NOT NULL,
-    created_at INTEGER
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    owner_id      INT UNSIGNED NOT NULL DEFAULT 0,
+    filename      VARCHAR(255) NOT NULL,
+    preset_id     INT UNSIGNED NULL REFERENCES presets(id) ON DELETE SET NULL,
+    design_id     INT UNSIGNED NULL REFERENCES designs(id) ON DELETE SET NULL,
+    svg_hash      VARCHAR(64) NULL,
+    gcode_path    VARCHAR(255) NULL,   -- file under data/jobs, not a blob
+    settings_json MEDIUMTEXT NOT NULL,
+    created_at    INT UNSIGNED NULL
+);
+
+CREATE TABLE meta (
+    `key`   VARCHAR(64) PRIMARY KEY,
+    `value` TEXT
 );
 ```
 
+The schema is created lazily by `forge_init_schema()` on the first request, and
+`forge_migrate()` applies additive changes after probing `information_schema`,
+so both are safe to run on every request. That is not elegance for its own
+sake: the target host has no shell and no migration runner.
+
 ## 12. PHP API Surface
 
-Minimal endpoints — most work is client-side:
+Most work is client-side; the API is persistence only.
 
 ```
-GET  /api/bits           → list of all bits
-POST /api/bits           → create bit
-PUT  /api/bits/:id       → update
-DELETE /api/bits/:id     → delete
+GET  /api/health              → { ok, version, php }   no auth, no database
 
-GET  /api/materials      → list of all materials
-POST /api/materials      → create
-PUT  /api/materials/:id  → update
+POST /api/auth/register       → invite token, or the first account on a fresh DB
+POST /api/auth/login          → { user, csrf }
+POST /api/auth/logout
+GET  /api/auth/me             → { user|null, csrf, bootstrap, version }
+POST /api/auth/password       → change own password (ends other sessions)
+POST /api/auth/profile        → change own display name
+
+GET  /api/invites             → admin: list
+POST /api/invites             → admin: mint an invite link
+GET  /api/invites/check       → public: is this token still usable?
+DELETE /api/invites/:id       → admin: revoke
+GET  /api/users               → admin: list accounts
+PUT  /api/users/:id           → admin: role / disabled
+
+GET  /api/designs             → my designs (metadata only, no artwork bytes)
+POST /api/designs             → create
+GET  /api/designs/:id         → full design incl. base64 assets
+PUT  /api/designs/:id         → partial save; omitted fields keep their value
+DELETE /api/designs/:id       → also revokes every share link to it
+POST /api/designs/:id/copy    → duplicate one of my own
+GET  /api/designs/:id/shares  → the links on this design
+POST /api/designs/:id/shares  → mint one
+DELETE /api/shares/:id        → revoke one
+GET  /api/shared/:token       → public read-only view of a shared design
+POST /api/shared/:token/copy  → fork it into my account (needs an account)
+
+GET  /api/bits           → built-in library + mine
+POST /api/bits           → create (mine)
+PUT  /api/bits/:id       → update mine; editing a built-in forks it (201)
+DELETE /api/bits/:id     → delete mine; a built-in is 403
+
+GET  /api/materials      → as bits
+POST /api/materials
+PUT  /api/materials/:id
 DELETE /api/materials/:id
 
-GET  /api/presets        → list
-POST /api/presets        → save current settings as preset
-GET  /api/presets/:id    → load preset
+GET  /api/presets        → built-in + mine
+POST /api/presets        → upsert on (owner_id, name)
+DELETE /api/presets/:id
 
-POST /api/jobs/save      → optionally persist a generated gcode file
-GET  /api/jobs/:id       → download persisted gcode
+POST /api/jobs/save      → persist a generated gcode file
+GET  /api/jobs           → my saved jobs
+GET  /api/jobs/:id       → download (ownership checked before a byte is read)
+DELETE /api/jobs/:id
 ```
 
-All responses are JSON. No authentication for V1 (assume local network). Future: token-based auth.
+All responses are JSON. Routing travels in `?r=` because `PATH_INFO` is not
+reliably populated on shared cPanel PHP-FPM / CGI setups.
+
+**Authorisation is per-handler, not blanket.** Reading the library, checking
+health and opening a share link all work signed out, because the tool is usable
+anonymously and only persistence needs an account. Every handler that writes
+calls `forge_require_user()` and `forge_require_csrf()` itself.
+
+A resource addressed by id rejects a non-numeric second segment outright rather
+than falling through to the collection listing, so `designs/1 OR 1=1` and
+`jobs/../../etc/passwd` are 404s rather than successful listings. (Neither was
+ever unsafe — ids are bound parameters and job paths go through `basename()` —
+but answering a malformed request with a successful listing hides real bugs.)
+
+Somebody else's row answers **404**, never 403: a 403 would confirm the id
+exists, letting anyone walk the id space to count what an install holds.
 
 ## 13. Initial Preset Library (ship with the tool)
 
@@ -560,7 +746,8 @@ Real lessons from real bench time — every one of these caused a problem during
 - **DXF input** in addition to SVG.
 - **Post-processor selection**: GRBL, FluidNC, Marlin, gSender flavor — most just need different M-codes.
 - **Multi-tool jobs**: one SVG, multiple operations, multiple bits, with tool-change pauses between.
-- **Cloud preset sync** (login + shared library).
+- ~~**Cloud preset sync** (login + shared library).~~ **Delivered in v2.0** —
+  see section 20. Accounts, per-user libraries, saved designs and share links.
 - **Mobile-friendly preview** that lets operator view the toolpath on a phone while at the machine.
 - **Direct upload to FluidNC** via the controller's WebUI API (no SD card swap needed).
 
@@ -573,6 +760,9 @@ cnc-sign-maker/
 │   └── styles.css
 ├── js/
 │   ├── app.js                     Top-level state, event wiring
+│   ├── account.js                 Sign-in / register, account menu, admin panel
+│   ├── designs.js                 Saved designs, share dialog, read-only banner
+│   ├── ui.js                      Shared DOM helpers, modals, base64
 │   ├── svg-parser.js              Path parsing, tessellation
 │   ├── bitmap-tracer.js           Bitmap raster → traced contour geometry
 │   ├── text-geometry.js           Typed text + font → sign geometry
@@ -582,7 +772,7 @@ cnc-sign-maker/
 │   ├── gcode-emitter.js           Toolpath → gcode strings
 │   ├── preview.js                 Canvas rendering, pan/zoom, drag
 │   ├── validation.js              Pre-flight checks
-│   ├── presets.js                 API client + LocalStorage autosave
+│   ├── presets.js                 API client + LocalStorage autosave (all resources)
 │   ├── workers/
 │   │   └── trace-worker.js        Bitmap tracing in a Web Worker
 │   └── lib/
@@ -592,18 +782,26 @@ cnc-sign-maker/
 │   └── logo.svg
 ├── api/
 │   ├── index.php                  Router
+│   ├── config.php                 MySQL credentials (gitignored)
+│   ├── config.sample.php          Template for the above
+│   ├── auth.php                   Sessions, CSRF, registration, login throttle
+│   ├── invites.php                Invite links + the admin user list
+│   ├── designs.php                Saved designs, artwork assets, share links
 │   ├── bits.php
 │   ├── materials.php
 │   ├── presets.php
 │   ├── jobs.php
-│   └── db.php                     SQLite schema, seed data, helpers
+│   └── db.php                     MySQL schema, migrations, seed data, helpers
+├── tools/
+│   ├── create-admin.php           Create / promote / reset an admin (CLI only)
+│   ├── migrate-sqlite-to-mysql.php  One-shot 1.x import (CLI only)
+│   └── .htaccess                  Denies web access to the CLI scripts
 ├── fonts/                         Bundled open-licensed sign fonts (+ licenses)
 ├── samples/                       Test SVGs (square, circle, holes plate, text)
 ├── data/
-│   ├── forge.sqlite               Created on first run (gitignored)
 │   ├── .htaccess                  Denies direct web access to data
 │   └── jobs/                      Saved gcode files (gitignored)
-├── install.sh                     Optional initial DB seed + permissions
+├── install.sh                     Schema creation + seed + permissions
 ├── .htaccess                      Root server config (Apache / cPanel)
 ├── spec.md                        This document
 └── README.md
@@ -621,12 +819,14 @@ Test SVGs shipped in `samples/`:
 
 ## 18. Out of Scope (v1)
 
+(Account systems and multi-user were listed here through v1 and were delivered
+in v2.0; see section 20. Everything below remains out of scope.)
+
 - FluidNC configuration management (use the controller's WebUI).
 - Probe-based auto-leveling (covered in stretch goals).
 - Real-time gcode streaming (use FluidNC's WebUI).
 - 3D / multi-axis output.
 - Lathe or laser conversions.
-- Account systems / multi-user.
 - DXF / DWG input.
 - 3D STL slicing.
 
@@ -662,6 +862,11 @@ Test SVGs shipped in `samples/`:
 
 ## 19. Implementation Status
 
+**v2.0** added accounts, MySQL-backed saved designs and share links; section 20
+describes that work and supersedes the multi-user exclusion in section 18.
+Sections 1-18 below describe the geometry and gcode tool, which v2.0 did not
+change.
+
 This spec reflects the currently shipped behavior in the repository, including bitmap tracing, workerized tracing (via `importScripts` of `bitmap-tracer.js` so the algorithm lives in one file) with stale-run protection, six operation modes, and the current tab behavior (even placement, material-aware Z anchoring on through-cuts). The seeded library ships 19 bits, 20 materials and 4 sample presets (see `api/db.php`), and the shape builder offers 22 base shapes plus 6 border variants (see `js/shapes.js`).
 
 ### Recent hardening pass (post-audit)
@@ -678,3 +883,169 @@ A pre-flight audit before live use surfaced several correctness issues that the 
 - **Footer order**: `M5` emits before the parking rapid so a VFD-controlled spindle (if ever wired) doesn't spin through the return move.
 - **Validation severity** corrected: `finalDepth >= 0` is now an error; `safeZ <= 0` blocks; the bit cutting-length check compares flute length against cut depth alone (adding Safe Z falsely blocked short-flute V-bits); the through-cut depth check no longer fires (false positive) on profile-in.
 - **New validation warnings**: DOC > bit diameter, plunge feed > cut feed, V-bit on a non-V-carve op, O-flute-recommended material with a multi-flute bit (generalises the HDPE/acrylic rule), spindle RPM vs material recommendation.
+
+---
+
+## 20. Accounts, Designs and Sharing (v2.0)
+
+Sections 1-19 describe the single-operator tool. This section describes what
+v2.0 added: accounts, per-user storage of whole designs in MySQL, and
+read-only share links. It supersedes the "Account systems / multi-user" line
+that stood in section 18, and delivers the "Cloud preset sync (login + shared
+library)" item from section 15.
+
+### 20.1 The governing constraint
+
+The tool is usable **signed out**. Geometry, toolpaths, validation, the preview
+and gcode download all run in the browser and never needed the server; section
+3 calls that the critical design decision, and a login wall would throw it
+away. So authentication gates *persistence*, not *use*:
+
+| Signed out | Signed in |
+|---|---|
+| Everything in sections 4-10: artwork, toolpaths, preview, validation, gcode download | plus saved designs, share links, saved gcode, and a private bit/material library |
+| Read the built-in library (19 bits, 20 materials, 4 presets) | plus your own rows on top of it |
+
+### 20.2 Designs versus presets
+
+A **preset** (section 6.3) is machining settings. A **design** is the whole
+working document: the settings **plus the artwork source**.
+
+The distinction is forced by determinism. The pipeline in section 3 is a pure
+function of its inputs, so a design reopened a year later emits identical gcode
+— but only if every input returns exactly as it went in. Through v1 nothing
+persisted the artwork at all: `state.svgText`, the traced bitmap and any
+uploaded font lived only in the tab that loaded them, and the LocalStorage
+autosave carried `{settings, bitId, materialId}` and nothing else.
+
+A design therefore stores, per input mode:
+
+| Mode | What must travel with it |
+|---|---|
+| `text` | settings alone — **unless** the sign uses an uploaded font, whose bytes must be stored or the text re-lays out in a fallback face and cuts a different shape |
+| `svg` | the SVG source text (up to 4 MB) |
+| `bitmap` | the original image bytes (up to 8 MB), so the same trace parameters produce the same contours |
+
+The uploaded-font case is the one that matters most and is the least obvious:
+losing it fails **silently**, with a plausible-looking sign of the wrong
+dimensions. `settings.fontKey` is stored alongside the font bytes and the face
+is re-registered under the same key before the settings are applied, so the key
+resolves rather than falling back.
+
+A related trap the same work exposed: the controller cached the loaded font
+without recording *which* font it was, so applying any settings that changed
+`fontKey` — a design **or a preset** — re-laid the text in the previously
+loaded face. `state.fontKeyLoaded` now gates that.
+
+### 20.3 Ownership rules
+
+`owner_id` **0** is the built-in library shipped with the tool: readable by
+every account, editable by none. A non-zero `owner_id` is a private row.
+
+- **Editing a built-in bit or material forks it** into a private copy named
+  `… (mine)` and returns 201 with `forked_from`, rather than refusing the edit
+  or changing a row that other accounts' presets depend on.
+- Deleting a built-in is a 403 that says why.
+- `UNIQUE(owner_id, name)` replaces `UNIQUE(name)` throughout. This is not
+  cosmetic: preset save is an upsert keyed on that constraint, so under the old
+  schema one account saving "My preset" silently overwrote another's.
+- A design name that collides is **suffixed**, not rejected — a copy has to go
+  somewhere.
+
+### 20.4 Sharing
+
+A share link is 32 random bytes, base64url, in `?share=…`. It opens the design
+in the normal editor marked read-only: full preview, full gcode download, no
+write access to the original. A signed-in viewer can fork it with
+`POST /api/shared/:token/copy`, which duplicates the row and its assets
+**server-side** rather than pushing megabytes back up through the browser.
+
+- Links carry an optional expiry and can be revoked; deleting a design cascades
+  its links away.
+- Revoked, expired and never-existed all answer the same opaque 404, so probing
+  cannot distinguish a token that was once real.
+- The token is stripped from the address bar on load, so it is not bookmarked
+  or sent as a `Referer` to the font CDN (the catalogue fetches 24 of its 30
+  faces from `raw.githubusercontent.com`).
+- Tokens are stored in the clear so an owner can copy a link again later. A
+  database read therefore exposes live links — but that same read already
+  exposes the designs, so it widens nothing that matters.
+- A shared design names a `bit_id` and `material_id` the recipient may not
+  have. The client warns explicitly when either fails to resolve: cutting with
+  a silently substituted tool is exactly what section 10 exists to prevent.
+
+### 20.5 Registration and roles
+
+Invite-only. An administrator mints a single-use token, optionally pinned to an
+email address and with an expiry, and sends the link. Nothing sends mail:
+shared hosts block or drop PHP `mail()` often enough that depending on it would
+strand users at a wall.
+
+The bootstrap exception is the first account on an empty `users` table, which
+becomes the administrator. Two racing registrations cannot both win it — the
+claim is an `INSERT IGNORE` of a sentinel key in `meta`, inside the same
+transaction as the user insert, so a later failure rolls the claim back too.
+
+Accounts are **disabled, never deleted**: designs, presets and jobs hang off the
+user id, and deleting the row would cascade away every design that user shared.
+The last active administrator cannot be demoted or disabled.
+
+### 20.6 Session and CSRF design
+
+Sessions live in a table, not in PHP's session storage, because on shared
+hosting the default save path is frequently a `/tmp` readable by every account
+on the box. The cookie holds a random token; the row stores only its SHA-256.
+
+Three layers guard state-changing requests, in order of what they cover:
+`SameSite=Lax` (blocks a cross-site form POST), the JSON-only content type
+(forces a CORS preflight for a cross-origin XHR), and an `X-Forge-CSRF` header
+carrying the session's token (covers the contexts where `SameSite` is not
+honoured). The header costs one line in the client's `request()` wrapper.
+
+Failed sign-ins are throttled per email, and per IP at six times that
+threshold — a whole shop shares one public address, so an IP bucket tight
+enough to police one person's typing would let them lock out everybody else.
+
+### 20.7 Why MySQL
+
+SQLite was the right call for a single-operator tool and the wrong one here.
+cPanel home directories are usually NFS-backed, which is why v1 had to avoid
+WAL mode (see the note in `api/db.php`); concurrent writers on a rollback
+journal over NFS is not a foundation for a multi-user service. MySQL is also
+the one database every shared-hosting plan already provides a control panel
+for.
+
+The port is not mechanical. Each of these was a real behaviour change, not a
+syntax swap:
+
+| SQLite | MySQL | Consequence |
+|---|---|---|
+| `INTEGER PRIMARY KEY` | `AUTO_INCREMENT` | — |
+| `INSERT OR IGNORE` | `INSERT IGNORE` | — |
+| `ON CONFLICT(x) DO UPDATE … excluded.y` | `ON DUPLICATE KEY UPDATE … VALUES(y)` | — |
+| `PRAGMA table_info()` | `information_schema.columns` | migration probing |
+| `TEXT UNIQUE` | illegal without a prefix length | every indexed name became `VARCHAR(190)` — utf8mb4 is 4 bytes/char against a 767-byte prefix cap |
+| `TEXT` holds anything | `TEXT` caps at 64 KB | a design carrying a 4 MB SVG needs `MEDIUMTEXT`/`LONGBLOB` |
+| `UNIQUE TEXT` is case-**sensitive** | default collation is case-**insensitive** | names differing only in case now collide — correct for emails, a behaviour change for library names |
+| loose typing | `STRICT_ALL_TABLES` | an over-long name aborts the insert instead of being silently cut, so callers clamp first |
+| named parameters may repeat | native prepares reject a repeated name | `VALUES (…, :now, :now)` had to become two placeholders |
+
+That last one only surfaces with `PDO::ATTR_EMULATE_PREPARES => false`, which
+this codebase sets so multi-megabyte design payloads are not re-quoted through
+the client.
+
+`tools/migrate-sqlite-to-mysql.php` carries a 1.x database across. It compares
+values rather than just names: a row identical to a shipped one is skipped as
+seed data, and a row that **differs** — a seeded bit whose cutting length the
+shop corrected — is imported under a `… (imported)` name instead of being
+silently dropped. Preset references are re-bound by name, because ids are
+renumbered by the move.
+
+### 20.8 XSS
+
+Through v1 this barely mattered — every DOM write already went through a
+`textContent` helper. It matters now: a design name and a display name written
+by one account are rendered in another's browser, which makes that discipline
+load-bearing. `js/ui.js`, `js/account.js` and `js/designs.js` build DOM with
+`createElement` and `textContent` throughout, and no new `innerHTML` write
+takes interpolated data. Keep it that way.

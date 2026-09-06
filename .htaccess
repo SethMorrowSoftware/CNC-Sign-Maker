@@ -16,6 +16,19 @@ Options -Indexes
   </IfModule>
 </FilesMatch>
 
+# The database credentials. PHP executes this file rather than serving it, and
+# it aborts on direct access anyway — but if the PHP handler is ever
+# misconfigured, a plain-text config.php would hand out the MySQL password.
+<FilesMatch "^config\.php$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
 # Block dotfiles (.git, .htaccess, .gitignore, ...).
 <FilesMatch "^\.">
   <IfModule mod_authz_core.c>

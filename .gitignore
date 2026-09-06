@@ -1,5 +1,8 @@
+# Database credentials — created from api/config.sample.php, never committed.
+api/config.php
+
 # Runtime data — created on first run, never committed.
-# Covers the database plus any -journal / -wal / -shm sidecar files.
+# Covers any legacy SQLite database plus its -journal / -wal / -shm sidecars.
 data/forge.sqlite*
 data/jobs/*
 !data/jobs/.gitkeep

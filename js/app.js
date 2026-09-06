@@ -7,7 +7,7 @@
 (function (Forge) {
   'use strict';
 
-  var VERSION = '1.0.0';
+  var VERSION = '2.0.0';
   var MAX_SVG_BYTES = 4 * 1024 * 1024;
   var MAX_FONT_BYTES = 8 * 1024 * 1024;
   var MAX_BITMAP_BYTES = 8 * 1024 * 1024;
@@ -212,7 +212,15 @@
     bitmapMeta: null,
     bits: [], materials: [], presets: [],
     bit: null, material: null, font: null,
-    serverUp: false
+    serverUp: false,
+    // Design bookkeeping. sourceDirty tracks whether the artwork (SVG text,
+    // bitmap bytes, uploaded font) has changed since the open design was
+    // loaded or last saved, so re-saving a design can skip re-uploading
+    // megabytes that did not move. readOnly marks a design opened through
+    // somebody else's share link.
+    sourceDirty: false, readOnly: false, fontFileName: null,
+    // Which font key state.font was actually parsed from.
+    fontKeyLoaded: null
   };
   var preview = null;
   var lastGcode = '';
@@ -573,8 +581,18 @@
   var rebuildText = debounce(rebuildTextNow, 110);
 
   function loadFontThen(cb) {
-    Forge.textGeometry.loadFont(state.settings.fontKey).then(function (font) {
+    var wanted = state.settings.fontKey;
+    Forge.textGeometry.loadFont(wanted).then(function (font) {
+      // Two loads can be in flight at once — boot restores the autosaved font
+      // while a ?share= link is still fetching, and that design names another.
+      // Whichever resolves last would otherwise win, so a stale one is
+      // discarded rather than overwriting the face the user actually asked for.
+      if (state.settings.fontKey !== wanted) return;
       state.font = font;
+      // Remember which key this font is, so callers can tell a loaded font
+      // from the *right* loaded font. Without it, switching fontKey while a
+      // font is already in hand silently re-lays the text in the old face.
+      state.fontKeyLoaded = wanted;
       if (cb) cb();
     }).catch(function (e) {
       // an uploaded font is lost on reload — fall back to a bundled one
@@ -586,6 +604,11 @@
         toast('Could not load font: ' + e.message, 'error');
       }
     });
+  }
+
+  /** True when state.font is the face settings.fontKey actually asks for. */
+  function fontIsCurrent() {
+    return !!state.font && state.fontKeyLoaded === state.settings.fontKey;
   }
 
   function regenerate() {
@@ -614,7 +637,9 @@
       setBitmapTraceBusy(false);
     }
     if (mode === 'text') {
-      if (state.font) { rebuildTextNow(); preview.fit(); }
+      // Only skip the load when the font in hand is the one this design or
+      // preset asks for — loading either can change fontKey underneath us.
+      if (fontIsCurrent()) { rebuildTextNow(); preview.fit(); }
       else loadFontThen(function () { rebuildTextNow(); preview.fit(); });
     } else if (mode === 'svg' && state.svgText) {
       reparseAndRecompute();
@@ -799,8 +824,16 @@
     if (!file) return;
     if (!/\.(png|jpe?g|webp|bmp)$/i.test(file.name || '')) { toast('Please upload PNG/JPG/WebP/BMP.', 'error'); return; }
     if (file.size > MAX_BITMAP_BYTES) { toast('Bitmap file is too large. Maximum allowed size is 8 MB.', 'error'); return; }
-    createImageBitmap(file).then(function (bmp) {
-      state.bitmapMeta = { name: file.name, size: file.size, width: bmp.width, height: bmp.height, bitmap: bmp };
+    // Decode for the tracer and keep the original bytes in parallel. An
+    // ImageBitmap cannot be serialised, so without the source file a saved
+    // design could never re-run the trace and would come back empty.
+    Promise.all([createImageBitmap(file), file.arrayBuffer()]).then(function (r) {
+      var bmp = r[0];
+      state.bitmapMeta = {
+        name: file.name, size: file.size, mime: file.type || 'image/png',
+        width: bmp.width, height: bmp.height, bitmap: bmp, bytes: r[1]
+      };
+      markSourceDirty();
       if (state.settings.jobName === 'job') state.settings.jobName = (file.name || 'bitmap').replace(/\.[^.]+$/, '');
       // Keep the current trace parameters — re-applying the preset here
       // would silently reset threshold/min-area/simplify tweaks (and with
@@ -1149,6 +1182,9 @@
         var added = Forge.textGeometry.addUploadedFont(
           file.name.replace(/\.(ttf|otf|woff)$/i, ''), fr.result);
         state.settings.fontKey = added.key;
+        state.fontFileName = file.name;
+        state.fontKeyLoaded = null;   // force a reload of the new face
+        markSourceDirty();
         populateFontSelect();
         loadFontThen(rebuildTextNow);
         toast('Font "' + added.name + '" added.');
@@ -1254,6 +1290,7 @@
     state.svgText = text;
     state.svgName = name;
     state.svgHash = hashString(text);
+    markSourceDirty();
     try {
       state.geometry = Forge.parseSvg(text, {
         tessellationTolerance: state.settings.tessellationTolerance
@@ -1504,7 +1541,7 @@
     }).then(function () {
       toast('Preset "' + name + '" saved.');
       return loadLibrary();
-    }).catch(function (e) { toast('Save failed: ' + e.message, 'error'); });
+    }).catch(function (e) { apiFailed('Save failed', e); });
   }
 
   /**
@@ -1560,20 +1597,42 @@
     return m;
   }
 
+  /**
+   * Turn an API rejection into a toast, or into the sign-in dialog when the
+   * server says the action needs an account. A red "Sign in to do that."
+   * toast would be a dead end; the dialog is the next step.
+   */
+  function apiFailed(prefix, e) {
+    if (e && (e.status === 401 || e.code === 'auth_required')) {
+      if (Forge.account) Forge.account.promptSignIn(prefix);
+      else toast('Sign in to do that.', 'warn');
+      return;
+    }
+    toast(prefix + ': ' + e.message, 'error');
+  }
+
   function wireLibraryButtons() {
     $('#bit-update').addEventListener('click', function () {
       if (!state.bit || !state.bit.id) { toast('No library bit selected.', 'warn'); return; }
-      Forge.api.updateBit(state.bit.id, bitFromForm()).then(function () {
-        toast('Bit updated.'); return loadLibrary();
-      }).then(function () { selectBit(state.bit.id); recomputeNow(); })
-        .catch(function (e) { toast('Update failed: ' + e.message, 'error'); });
+      var wasBuiltin = !!state.bit.builtin;
+      Forge.api.updateBit(state.bit.id, bitFromForm()).then(function (saved) {
+        // A built-in bit is shared by every account, so the server forks it
+        // into a private copy instead of editing in place. Follow the copy —
+        // otherwise the form would show the user's numbers while the picker
+        // still pointed at the untouched original.
+        toast(wasBuiltin
+          ? 'Built-in bit copied to your library as "' + saved.name + '".'
+          : 'Bit updated.');
+        return loadLibrary().then(function () { return saved; });
+      }).then(function (saved) { selectBit(saved.id); recomputeNow(); })
+        .catch(function (e) { apiFailed('Update failed', e); });
     });
     $('#bit-new').addEventListener('click', function () {
       var b = bitFromForm();
       Forge.api.createBit(b).then(function (created) {
         toast('Bit "' + created.name + '" created.');
         return loadLibrary().then(function () { selectBit(created.id); recomputeNow(); });
-      }).catch(function (e) { toast('Create failed: ' + e.message, 'error'); });
+      }).catch(function (e) { apiFailed('Create failed', e); });
     });
     $('#bit-delete').addEventListener('click', function () {
       if (!state.bit || !state.bit.id) return;
@@ -1584,17 +1643,21 @@
       }).then(function () {
         if (state.bits[0]) selectBit(state.bits[0].id);
         recomputeNow();
-      }).catch(function (e) { toast('Delete failed: ' + e.message, 'error'); });
+      }).catch(function (e) { apiFailed('Delete failed', e); });
     });
 
     $('#material-update').addEventListener('click', function () {
       if (!state.material || !state.material.id) {
         toast('No library material selected.', 'warn'); return;
       }
-      Forge.api.updateMaterial(state.material.id, materialFromForm()).then(function () {
-        toast('Material updated.'); return loadLibrary();
-      }).then(function () { selectMaterial(state.material.id, false); recomputeNow(); })
-        .catch(function (e) { toast('Update failed: ' + e.message, 'error'); });
+      var wasBuiltin = !!state.material.builtin;
+      Forge.api.updateMaterial(state.material.id, materialFromForm()).then(function (saved) {
+        toast(wasBuiltin
+          ? 'Built-in material copied to your library as "' + saved.name + '".'
+          : 'Material updated.');
+        return loadLibrary().then(function () { return saved; });
+      }).then(function (saved) { selectMaterial(saved.id, false); recomputeNow(); })
+        .catch(function (e) { apiFailed('Update failed', e); });
     });
     $('#material-new').addEventListener('click', function () {
       Forge.api.createMaterial(materialFromForm()).then(function (created) {
@@ -1602,7 +1665,7 @@
         return loadLibrary().then(function () {
           selectMaterial(created.id, false); recomputeNow();
         });
-      }).catch(function (e) { toast('Create failed: ' + e.message, 'error'); });
+      }).catch(function (e) { apiFailed('Create failed', e); });
     });
     $('#material-delete').addEventListener('click', function () {
       if (!state.material || !state.material.id) return;
@@ -1613,12 +1676,17 @@
       }).then(function () {
         if (state.materials[0]) selectMaterial(state.materials[0].id, false);
         recomputeNow();
-      }).catch(function (e) { toast('Delete failed: ' + e.message, 'error'); });
+      }).catch(function (e) { apiFailed('Delete failed', e); });
     });
   }
 
   /* ---- autosave ------------------------------------------------------- */
   function autosave() {
+    // Not while viewing somebody else's shared design: the LocalStorage
+    // scratchpad is the user's own unsaved work, and overwriting it with a
+    // design they merely looked at would lose theirs — and restore only the
+    // settings on the next reload, without the artwork that went with them.
+    if (state.readOnly) return;
     Forge.store.save({
       settings: state.settings,
       bitId: state.bit ? state.bit.id : null,
@@ -1838,7 +1906,7 @@
       if (!window.confirm('Delete this preset?')) return;
       Forge.api.deletePreset(id).then(function () {
         toast('Preset deleted.'); return loadLibrary();
-      }).catch(function (e) { toast('Delete failed: ' + e.message, 'error'); });
+      }).catch(function (e) { apiFailed('Delete failed', e); });
     });
 
     /* preview toolbar */
@@ -1892,10 +1960,15 @@
         svg_hash: state.svgHash, settings: state.settings
       }).then(function (r) {
         toast('Saved to server (job #' + r.id + ').');
-      }).catch(function (e) { toast('Save failed: ' + e.message, 'error'); });
+      }).catch(function (e) { apiFailed('Save failed', e); });
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') $('#modal').classList.add('hidden');
+      // Only when nothing is stacked on top: js/ui.js dialogs handle their own
+      // Escape, and closing the gcode modal underneath one of them would
+      // dismiss two things on a single keypress.
+      if (e.key === 'Escape' && !document.querySelector('.modal:not(#modal)')) {
+        $('#modal').classList.add('hidden');
+      }
     });
 
     /* legend */
@@ -1912,7 +1985,210 @@
     });
   }
 
+  /* ---- designs: capture and restore ------------------------------------
+     A design is everything needed to rebuild this exact job: the settings,
+     plus the artwork source the pipeline consumes. See api/designs.php for
+     why the artwork has to travel with it. */
+
+  function markSourceDirty() {
+    state.sourceDirty = true;
+  }
+
+  function markSourceSaved() {
+    state.sourceDirty = false;
+  }
+
+  /** The design row fields, without the artwork. */
+  function captureDesign() {
+    return {
+      input_mode:  state.settings.inputMode,
+      operation:   state.settings.operation,
+      bit_id:      state.bit && state.bit.id ? state.bit.id : null,
+      material_id: state.material && state.material.id ? state.material.id : null,
+      settings:    JSON.parse(JSON.stringify(state.settings)),
+      svg_hash:    state.svgHash || null
+    };
+  }
+
+  /**
+   * The artwork block.
+   *
+   * `storedKinds` lists the asset kinds the server already holds for this
+   * design. An "unchanged" marker is only safe for a kind that is actually
+   * there: sending it for a kind the server does not have would save a design
+   * whose artwork is silently missing. On a create, pass nothing.
+   */
+  function captureAssets(storedKinds) {
+    var ui = Forge.ui;
+    var out = {};
+    var have = storedKinds || [];
+    var mode = state.settings.inputMode;
+    function reuse(kind) {
+      return !state.sourceDirty && have.indexOf(kind) !== -1;
+    }
+
+    if (mode === 'svg' && state.svgText) {
+      out.svg = reuse('svg') ? { unchanged: true } : {
+        filename: state.svgName || 'artwork.svg',
+        mime: 'image/svg+xml',
+        data_base64: ui.textToBase64(state.svgText)
+      };
+    }
+    if (mode === 'bitmap' && state.bitmapMeta && state.bitmapMeta.bytes) {
+      out.bitmap = reuse('bitmap') ? { unchanged: true } : {
+        filename: state.bitmapMeta.name || 'artwork.png',
+        mime: state.bitmapMeta.mime || 'image/png',
+        data_base64: ui.bytesToBase64(state.bitmapMeta.bytes)
+      };
+    }
+    // The font travels in every mode where it is in use, not just text mode:
+    // losing it would re-lay the sign out in a fallback face and cut a
+    // different shape.
+    var fk = state.settings.fontKey;
+    if (Forge.textGeometry.isUploadedKey(fk)) {
+      var up = Forge.textGeometry.getUploadedFont(fk);
+      if (up) {
+        out.font = reuse('font') ? { unchanged: true } : {
+          key: fk,
+          filename: state.fontFileName || (up.name + '.ttf'),
+          mime: 'font/ttf',
+          data_base64: ui.bytesToBase64(up.buffer)
+        };
+      }
+    }
+    return out;
+  }
+
+  /** Load a design (own or shared) into the editor. Returns a Promise. */
+  function applyDesign(design, opts) {
+    opts = opts || {};
+    var ui = Forge.ui;
+    var assets = design.assets || {};
+
+    // Register the uploaded font before anything reads settings.fontKey, so
+    // the key stored with the design resolves instead of falling back.
+    if (assets.font && assets.font.data_base64) {
+      try {
+        var key = assets.font.key ||
+          (design.settings && design.settings.fontKey) || 'upload:restored';
+        var fname = assets.font.filename || 'font.ttf';
+        Forge.textGeometry.registerUploadedFont(
+          key, fname.replace(/\.(ttf|otf|woff2?)$/i, ''),
+          ui.base64ToBytes(assets.font.data_base64).buffer);
+        state.fontFileName = fname;
+      } catch (e) {
+        toast('The font saved with this design could not be read — the text '
+          + 'will be laid out in a bundled face, so check the size before cutting.', 'warn');
+      }
+    }
+
+    // Drop the previous design's artwork so nothing from it can leak into
+    // this one when the input mode is switched later.
+    state.svgText = null;
+    state.svgName = null;
+    state.bitmapMeta = null;
+
+    var ready = Promise.resolve();
+    if (assets.svg && assets.svg.data_base64) {
+      state.svgText = ui.base64ToText(assets.svg.data_base64);
+      state.svgName = assets.svg.filename || 'artwork.svg';
+    }
+    if (assets.bitmap && assets.bitmap.data_base64) {
+      var bytes = ui.base64ToBytes(assets.bitmap.data_base64);
+      var mime = assets.bitmap.mime || 'image/png';
+      ready = createImageBitmap(new Blob([bytes], { type: mime })).then(function (bmp) {
+        state.bitmapMeta = {
+          name: assets.bitmap.filename || 'artwork.png',
+          size: bytes.length, mime: mime,
+          width: bmp.width, height: bmp.height, bitmap: bmp, bytes: bytes.buffer
+        };
+      }).catch(function () {
+        toast('The bitmap saved with this design could not be decoded.', 'error');
+      });
+    }
+
+    return ready.then(function () {
+      // Start from the defaults so a design saved before a setting existed
+      // does not silently inherit whatever the previous design left behind.
+      state.settings = Object.assign({}, DEFAULTS, { graphics: [] });
+      applyStoredSettings(design.settings || {});
+      if (design.input_mode) state.settings.inputMode = design.input_mode;
+      if (design.operation) state.settings.operation = design.operation;
+      state.svgHash = design.svg_hash || null;
+
+      if (design.bit_id) selectBit(design.bit_id);
+      if (design.material_id) selectMaterial(design.material_id, false);
+      // A shared design can name a bit or material that only its author has.
+      // Say so loudly: silently cutting with a different tool is exactly the
+      // kind of surprise the pre-flight checks exist to prevent.
+      if (design.bit_id && !state.bit) {
+        toast('This design uses a bit that is not in your library. Pick the '
+          + 'closest match before cutting.', 'warn');
+      }
+      if (design.material_id && !state.material) {
+        toast('This design uses a material that is not in your library. Pick '
+          + 'the closest match before cutting.', 'warn');
+      }
+
+      // An uploaded font key that did not come with bytes cannot be honoured.
+      if (!Forge.textGeometry.FONTS.some(function (f) {
+        return f.key === state.settings.fontKey;
+      })) {
+        state.settings.fontKey = DEFAULTS.fontKey;
+      }
+
+      populateFontSelect();
+      syncAllForms();
+      renderGraphicsList();
+      setReadOnly(!!opts.readOnly);
+      state.sourceDirty = false;
+
+      switchInputMode(state.settings.inputMode || 'text');
+      if (state.settings.inputMode === 'svg' && state.geometry) showSvgInfo();
+      if (state.settings.inputMode === 'bitmap' && state.bitmapMeta) {
+        showBitmapInfo(state.bitmapMeta);
+      }
+      preview.fit();
+    });
+  }
+
+  function setReadOnly(on) {
+    state.readOnly = !!on;
+    document.body.classList.toggle('is-readonly', state.readOnly);
+  }
+
   /* ---- boot ----------------------------------------------------------- */
+
+  /** Apply the LocalStorage scratchpad and pick a starting bit + material. */
+  function restoreSession() {
+    var saved = Forge.store.load();
+    if (saved && saved.settings) {
+      applyStoredSettings(saved.settings);
+      renderGraphicsList();
+    }
+    if (state.bits.length) {
+      var bId = saved && saved.bitId &&
+        state.bits.some(function (b) { return b.id === saved.bitId; })
+        ? saved.bitId : state.bits[0].id;
+      selectBit(bId);
+    }
+    if (state.materials.length) {
+      var mId = saved && saved.materialId &&
+        state.materials.some(function (m) { return m.id === saved.materialId; })
+        ? saved.materialId : state.materials[0].id;
+      selectMaterial(mId, !saved);
+    }
+    // An uploaded font does not survive a reload, so a stored key that no
+    // longer resolves falls back rather than failing every rebuild.
+    if (!Forge.textGeometry.FONTS.some(function (f) {
+      return f.key === state.settings.fontKey;
+    })) {
+      state.settings.fontKey = DEFAULTS.fontKey;
+    }
+    syncAllForms();
+    switchInputMode(state.settings.inputMode || 'text');
+  }
+
   function init() {
     $('#version-pill').textContent = 'v' + VERSION;
     preview = Forge.createPreview($('#preview'));
@@ -1922,33 +2198,41 @@
     preview.draw({ machineX: state.settings.machineX, machineY: state.settings.machineY });
     preview.fit();
 
-    loadLibrary().then(function () {
-      var saved = Forge.store.load();
-      if (saved && saved.settings) {
-        applyStoredSettings(saved.settings);
-        renderGraphicsList();
-      }
-      if (state.bits.length) {
-        var bId = saved && saved.bitId &&
-          state.bits.some(function (b) { return b.id === saved.bitId; })
-          ? saved.bitId : state.bits[0].id;
-        selectBit(bId);
-      }
-      if (state.materials.length) {
-        var mId = saved && saved.materialId &&
-          state.materials.some(function (m) { return m.id === saved.materialId; })
-          ? saved.materialId : state.materials[0].id;
-        selectMaterial(mId, !saved);
-      }
-      if (!Forge.textGeometry.FONTS.some(function (f) {
-        return f.key === state.settings.fontKey;
-      })) {
-        state.settings.fontKey = DEFAULTS.fontKey;
-      }
-      syncAllForms();
-      switchInputMode(state.settings.inputMode || 'text');
-    });
+    // Resolve the session before loading the library: which bits, materials
+    // and presets come back depends on who is asking.
+    var session = Forge.account ? Forge.account.init() : Promise.resolve(null);
+
+    session
+      .then(function () { return loadLibrary(); })
+      .then(function () {
+        restoreSession();
+        // A ?share= or ?invite= link takes over from here.
+        return Forge.designs ? Forge.designs.bootFromUrl() : null;
+      })
+      .catch(function (e) {
+        toast('Startup problem: ' + e.message, 'error');
+      });
   }
+
+  /* Bridge for js/account.js and js/designs.js. Keeping the controller's
+     state private and exposing a narrow surface means the new panels cannot
+     reach in and desynchronise the pipeline. */
+  Forge.toast = toast;
+  Forge.app = {
+    captureDesign: captureDesign,
+    captureAssets: captureAssets,
+    applyDesign: applyDesign,
+    setReadOnly: setReadOnly,
+    isReadOnly: function () { return state.readOnly; },
+    markSourceDirty: markSourceDirty,
+    markSourceSaved: markSourceSaved,
+    reloadLibrary: function () { return loadLibrary(); },
+    recompute: recomputeNow,
+    jobName: function () { return state.settings.jobName || 'job'; },
+    inputMode: function () { return state.settings.inputMode; },
+    hasGeometry: function () { return !!state.geometry; },
+    apiFailed: apiFailed
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

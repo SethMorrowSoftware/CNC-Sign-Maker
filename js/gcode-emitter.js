@@ -90,7 +90,7 @@
       rpm: rpm,
       date: (ctx.timestamp || '').slice(0, 10),
       time: (ctx.timestamp || '').slice(11, 19),
-      version: ctx.version || '1.0.0'
+      version: ctx.version || '2.0.0'
     };
 
     /* ---- header comment block ---- */
