@@ -56,29 +56,67 @@
   ];
 
   var cache = {};      // key -> parsed Font
+  // key -> { name, buffer } for uploaded faces. The bytes are kept, not just
+  // the parsed font, because a saved or shared design has to carry the actual
+  // file: re-laying the same text out in a fallback face changes the glyph
+  // outlines, and therefore changes the gcode that gets cut.
+  var uploads = {};
 
   /** Load (and cache) a font by catalogue key or uploaded key. Promise<Font>. */
   function loadFont(key) {
     if (cache[key]) return Promise.resolve(cache[key]);
     var entry = FONTS.filter(function (f) { return f.key === key; })[0];
     if (!entry) return Promise.reject(new Error('Unknown font: ' + key));
+    if (entry.uploaded) {
+      // Registered but not parsed — only reachable if the cache was cleared.
+      return uploads[key]
+        ? Promise.resolve(parseInto(key, uploads[key].buffer))
+        : Promise.reject(new Error('Uploaded font is no longer available: ' + entry.name));
+    }
     return fetch(entry.file).then(function (r) {
       if (!r.ok) throw new Error('could not load ' + entry.file);
       return r.arrayBuffer();
     }).then(function (buf) {
-      var font = ot().parse(buf);
-      cache[key] = font;
-      return font;
+      return parseInto(key, buf);
     });
   }
 
-  /** Register an uploaded font file. Returns { key, name }. */
-  function addUploadedFont(name, arrayBuffer) {
-    var font = ot().parse(arrayBuffer);
-    var key = 'upload:' + name + ':' + Date.now();
+  function parseInto(key, buffer) {
+    var font = ot().parse(buffer);
     cache[key] = font;
-    FONTS.push({ key: key, name: name + ' (uploaded)', file: null, uploaded: true });
-    return { key: key, name: name + ' (uploaded)' };
+    return font;
+  }
+
+  /**
+   * Register an uploaded font under an explicit key.
+   *
+   * Restoring a saved design reuses the key the design was saved with, so
+   * settings.fontKey still resolves. A fresh upload gets a new one.
+   */
+  function registerUploadedFont(key, name, arrayBuffer) {
+    var label = name + ' (uploaded)';
+    parseInto(key, arrayBuffer);          // throws on an unreadable file
+    uploads[key] = { name: name, buffer: arrayBuffer };
+    if (!FONTS.some(function (f) { return f.key === key; })) {
+      FONTS.push({ key: key, name: label, file: null, uploaded: true });
+    }
+    return { key: key, name: label };
+  }
+
+  /** Register a newly uploaded font file. Returns { key, name }. */
+  function addUploadedFont(name, arrayBuffer) {
+    // The key embeds the name and a timestamp so two uploads of different
+    // files with the same name stay distinct within a session.
+    return registerUploadedFont('upload:' + name + ':' + Date.now(), name, arrayBuffer);
+  }
+
+  /** The stored bytes for an uploaded font key, or null. */
+  function getUploadedFont(key) {
+    return uploads[key] || null;
+  }
+
+  function isUploadedKey(key) {
+    return typeof key === 'string' && key.indexOf('upload:') === 0;
   }
 
   /** Cap height (height of an uppercase letter) in REF units. */
@@ -285,6 +323,9 @@
     FONTS: FONTS,
     loadFont: loadFont,
     addUploadedFont: addUploadedFont,
+    registerUploadedFont: registerUploadedFont,
+    getUploadedFont: getUploadedFont,
+    isUploadedKey: isUploadedKey,
     build: build
   };
 })(typeof window !== 'undefined' ? (window.Forge = window.Forge || {})

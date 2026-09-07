@@ -11,8 +11,15 @@ of your own artwork. Every cut is previewed on a live canvas before a single
 line of gcode is written.
 
 All geometry and gcode generation runs **client-side in the browser**. The PHP
-backend only stores bits, materials, presets and (optionally) finished gcode, so
-the core of the tool keeps working even when the backend is unreachable.
+backend stores accounts, saved designs, bits, materials, presets and
+(optionally) finished gcode, so the core of the tool keeps working even signed
+out or when the backend is unreachable.
+
+Since **v2.0** the tool is multi-user: sign in to save a whole design — artwork
+included — to a MySQL database, keep a private bit and material library, and
+hand someone a **share link** that opens the design read-only in their browser.
+Everything still works without an account; an account is what makes it
+persist.
 
 ---
 
@@ -21,6 +28,8 @@ the core of the tool keeps working even when the backend is unreachable.
 - [Highlights](#highlights)
 - [Requirements](#requirements)
 - [Install](#install)
+- [Upgrading from 1.x](#upgrading-from-1x)
+- [Accounts, designs and sharing](#accounts-designs-and-sharing)
 - [Security &amp; deployment hardening](#security--deployment-hardening)
 - [Quick start](#quick-start)
 - [The interface](#the-interface)
@@ -61,16 +70,32 @@ the core of the tool keeps working even when the backend is unreachable.
 - **Documented, reproducible gcode** — every file carries a header recording
   every parameter used. An *air pass* option re-emits the job 25&nbsp;mm above
   the stock so you can dry-run the toolpath in space first.
-- **Material &amp; bit library** — a seeded sign-shop starter set you can edit,
-  extend and save job presets against.
+- **Material &amp; bit library** — a seeded sign-shop starter set shared by every
+  account, plus your own private bits and materials. Editing a built-in one
+  makes you a private copy rather than changing it for everybody.
+- **Saved designs** — the whole document, not just the settings: the uploaded
+  SVG, the traced bitmap, even an uploaded font travel with it, so reopening a
+  design a year later produces byte-for-byte the same gcode.
+- **Share links** — hand someone an unguessable URL. They see the design
+  read-only, can preview and download gcode from it, and can save a copy of
+  their own if they have an account. Revoke the link at any time.
+- **Invite-only accounts** — the first person to register becomes the
+  administrator and invites everyone else. No public sign-up form.
 - **Self-hosted, no build step** — vanilla HTML/CSS/JavaScript plus a tiny
-  PHP&nbsp;+&nbsp;SQLite backend. No framework, no package manager, no compile.
+  PHP&nbsp;+&nbsp;MySQL backend. No framework, no package manager, no compile.
 
 ## Requirements
 
-- **PHP 8.1+** with the `pdo_sqlite` extension (bundled with most PHP builds).
+- **PHP 8.1+** with the `pdo_mysql` and `mbstring` extensions. Both are
+  standard on cPanel but neither is compiled into PHP by default — tick them
+  under *Select PHP Version → Extensions* if a fresh install reports one
+  missing.
+- **MySQL 5.7+ or MariaDB 10.3+** — a database and a user with full privileges
+  on it. Every cPanel plan has this; create both under *MySQL Databases*.
 - A modern browser — Chrome, Firefox, Edge or Safari (ES2020+).
-- No build step, no Node, no package manager, no framework.
+- **HTTPS**, if the install is reachable from the internet. The session cookie
+  is marked `Secure` automatically once the site is served over TLS.
+- No build step, no Node, no package manager, no framework, no Composer.
 
 ## Install
 
@@ -79,58 +104,251 @@ the core of the tool keeps working even when the backend is unreachable.
 ```bash
 git clone <this-repo> lowrider-forge
 cd lowrider-forge
-./install.sh                      # optional — creates data/ and seeds the database
-php -S localhost:8000 router.php  # serve from the project root
+cp api/config.sample.php api/config.php   # then fill in your MySQL credentials
+./install.sh                              # creates the schema and seeds the library
+php -S localhost:8000 router.php          # serve from the project root
 ```
 
-Then open <http://localhost:8000>.
+Then open <http://localhost:8000> and register — the first account created on
+a fresh install becomes the administrator.
 
 > Launch the built-in server **with `router.php`** as shown. PHP's built-in
 > server ignores `.htaccess`, so without the router the `data/` directory —
-> the SQLite database and any saved gcode — is reachable over HTTP. `router.php`
-> denies `data/` and dotfiles and passes everything else through; on Apache it
-> is ignored (the `.htaccess` rules apply). See
+> every saved gcode file — is downloadable over HTTP by anyone, bypassing the
+> ownership checks the API applies. `router.php` denies `data/`, `tools/`,
+> `api/config.php` and dotfiles and passes everything else through; on Apache
+> it is ignored (the `.htaccess` rules apply). See
 > [Security &amp; deployment hardening](#security--deployment-hardening).
 
 ### Shared cPanel hosting (production)
 
-1. Upload the project folder into — or next to — `public_html`, for example
+1. In cPanel **MySQL Databases**, create a database and a user, and add the
+   user to the database with **ALL PRIVILEGES**. cPanel prefixes both names
+   with your account name, e.g. `myaccount_forge` and `myaccount_forgeuser`.
+2. Upload the project folder into — or next to — `public_html`, for example
    `public_html/forge/`.
-2. In cPanel **MultiPHP Manager**, set that directory to **PHP 8.1 or newer**.
-3. Make sure `data/` is writable by the account. On the suEXEC / PHP-FPM setup
-   cPanel uses by default a `0755` directory is enough.
-4. Open the URL. The SQLite database is created and seeded automatically on the
-   first request — no build step, no SSH, no `install.sh` required.
+3. Copy `api/config.sample.php` to `api/config.php` and paste in the database
+   name, user and password from step 1.
+4. In cPanel **MultiPHP Manager**, set that directory to **PHP 8.1 or newer**,
+   and in *Select PHP Version → Extensions* make sure `pdo_mysql` is ticked.
+5. Make sure `data/` is writable by the account, so saved gcode files can be
+   written. On the suEXEC / PHP-FPM setup cPanel uses by default a `0755`
+   directory is enough.
+6. Open the URL and register. **The first account becomes the administrator**,
+   so do this before announcing the URL to anyone — on a fresh install that
+   window is open to whoever arrives first. Invite everyone else from the
+   account menu.
 
 The app never assumes its install path, so a subdirectory
-(`example.com/forge/`) behaves exactly like a document root. The database
-deliberately uses a rollback journal rather than WAL, because cPanel home
-directories are usually NFS-backed and SQLite's WAL mode is not NFS-safe.
+(`example.com/forge/`) behaves exactly like a document root; the session cookie
+is scoped to that path, so two installs on one hostname do not fight.
+
+If you would rather not keep credentials in a file, every setting in
+`api/config.php` can come from an environment variable instead —
+`FORGE_DB_NAME`, `FORGE_DB_USER`, `FORGE_DB_PASS` and so on. The names are
+listed in `api/config.sample.php`.
+
+### Creating the administrator from a shell
+
+If the sign-up window has already closed — or you locked yourself out — create
+or repair the admin account directly:
+
+```bash
+php tools/create-admin.php --email=you@example.com --password='a long password'
+php tools/create-admin.php --email=you@example.com --promote   # existing account
+php tools/create-admin.php --email=you@example.com --reset --password='new one'
+```
+
+## Upgrading from 1.x
+
+Version 1.x stored the library in `data/forge.sqlite`. Version 2 uses MySQL, so
+that content has to be copied across once:
+
+1. Follow the install steps above so the MySQL schema exists.
+2. Register your account in the browser (it becomes the administrator).
+3. Import the old library into that account:
+
+   ```bash
+   php tools/migrate-sqlite-to-mysql.php --owner=you@example.com --dry-run
+   php tools/migrate-sqlite-to-mysql.php --owner=you@example.com
+   ```
+
+   Use `--owner=system` instead to put the rows in the shared built-in library
+   where every account can read them.
+
+The import is additive and safe to re-run. Rows identical to ones the tool
+already ships are skipped; rows you had **customised** — a seeded bit whose
+cutting length you corrected, say — are imported under a `... (imported)` name
+rather than being silently dropped, and the summary tells you how many. Presets
+are re-bound to their bit and material **by name**, because the ids are
+renumbered by the move; any that could not be matched are reported so you can
+re-pick them.
+
+Nothing is deleted from `data/forge.sqlite`, so keep it as a rollback point
+until you are satisfied, then delete it.
+
+Saved gcode files stay where they are in `data/jobs/`; only the rows that point
+at them move.
+
+## Accounts, designs and sharing
+
+### Signing in
+
+The tool works fully **signed out**: artwork, toolpaths, the preview,
+validation and gcode download all run in the browser and never needed the
+server. An account adds persistence — saved designs, share links, saved gcode,
+and a private bit and material library.
+
+Registration is **invite-only**. An administrator creates an invite from the
+account menu (*Administration → Invites*), optionally pinned to one email
+address and with an expiry, and sends the link however they like. Nothing here
+sends mail: shared hosts block or silently drop PHP `mail()` often enough that
+depending on it would strand people waiting for a message that never arrives.
+
+The single exception is the very first account on a fresh install, which
+becomes the administrator. That window closes the moment it is used.
+
+### Designs versus presets
+
+They are different things, and the difference matters:
+
+- A **preset** is machining settings — operation, depths, feeds, tabs. It is
+  what you reach for when cutting *different* artwork the *same* way.
+- A **design** is the whole working document: the settings **plus the artwork**
+  — the uploaded SVG text, the traced bitmap's original bytes, the shapes, and
+  an uploaded font if the sign uses one.
+
+That last part is the point. The geometry pipeline is deterministic given its
+inputs, so a design reopened next year produces the same gcode — but only if
+every input comes back exactly as it went in. An uploaded font that did not
+travel with the design would silently re-lay the text in a fallback face and
+cut a different shape.
+
+Save with **Save design** in the header; **Save as new…** forks the current
+work into a second design. *My designs* lists what you have, and opens,
+duplicates, renames and deletes them. Design names are per-account, so you and
+a colleague can both have a "Front door sign".
+
+The LocalStorage autosave is still there and still per-browser: it is the
+scratchpad that survives a reload. A saved design is the durable copy.
+
+### Share links
+
+*Share* on a saved design mints an unguessable URL — 32 random bytes — that
+opens the design in the normal editor marked **read only**. The recipient can
+adjust settings, preview and download gcode; they cannot change your copy. If
+they have an account, **Save a copy** forks it into theirs.
+
+The token is the credential: anyone holding the link can view the design, so
+treat it like a password. Links can be given an expiry, and **Revoke** kills
+one immediately. Deleting a design revokes every link to it. The share dialog
+shows how many times each link has been opened and when it was last used.
+
+The token is stripped from the address bar as soon as the page loads, so it
+does not end up bookmarked or sent as a `Referer` to the font CDN.
+
+> **Check the tooling before you cut.** A shared design records *which* bit and
+> material it used, and the recipient may not have those rows in their library.
+> The tool says so with a warning when it happens — pick the closest match
+> before running the job.
+
+### The shared library
+
+The 19 bits, 20 materials and 4 presets the tool ships with belong to a
+built-in library that every account can read and **nobody can edit in place**.
+Editing one makes you a private copy instead (named `... (mine)`), so retuning
+feeds for your plywood never moves the numbers under somebody else's saved
+preset. Bits and materials you create are yours alone.
+
+### Administration
+
+Administrators get an *Administration* entry in the account menu:
+
+- **Invites** — create, copy and revoke invite links.
+- **Users** — see every account, disable or re-enable one, and promote or
+  demote administrators.
+
+Accounts are disabled, never deleted: designs, presets and saved jobs hang off
+the user id, and deleting the row would cascade away every design that user
+ever shared. Disabling ends their sessions immediately. The last active
+administrator cannot be demoted or disabled, and you cannot lock out your own
+admin account.
 
 ## Security &amp; deployment hardening
 
-The tool ships **no authentication** and is built for a **trusted local
-network** — never expose it to the public internet. Beyond that, how the
-`data/` directory (the SQLite database plus saved gcode) is kept off the web
-depends on the server you run it on:
+Version 2 ships authentication, so unlike 1.x this is no longer a
+trusted-local-network-only tool. It is still a **self-hosted shop tool**, not a
+hardened SaaS product — deploy it accordingly.
 
-- **Apache / cPanel (production).** The bundled `.htaccess` files already deny
-  direct access to `data/`, the database, dotfiles and the spec/installer —
-  nothing more to do.
-- **PHP built-in server (local dev).** `.htaccess` is **ignored**. Always start
-  it with the bundled router: `php -S localhost:8000 router.php`. The router
-  returns `404` for any request under `data/` or to a dotfile and serves
-  everything else unchanged.
-- **nginx.** `.htaccess` is **ignored**. Add deny rules to your server block
-  before routing the API through PHP-FPM:
+**What the tool does for you**
 
-  ```nginx
-  location ^~ /data/ { deny all; return 404; }
-  location ~ /\.     { deny all; return 404; }
-  ```
+- Passwords are hashed with `password_hash()` (bcrypt) and re-hashed on sign-in
+  whenever PHP's default cost changes. Nothing stores a password.
+- Sessions live in the `sessions` table, not in PHP's own session storage: on
+  shared hosting PHP's default session directory is frequently a shared `/tmp`
+  readable by every account on the box. The cookie carries 32 random bytes and
+  the database stores only their SHA-256, so a database read cannot be replayed
+  as a login.
+- The session cookie is `HttpOnly`, `SameSite=Lax`, scoped to the app's own
+  path, and `Secure` whenever the request arrives over HTTPS.
+- Every state-changing request carries a CSRF token in an `X-Forge-CSRF`
+  header, on top of `SameSite=Lax` and the JSON-only content type.
+- Failed sign-ins are throttled per email and, far more loosely, per IP — a
+  whole shop shares one public address, so the IP bucket blunts a spray across
+  many accounts rather than policing one person's typing.
+- Every design, preset, saved job and private library row is checked against
+  the signed-in user before it is read or written. Somebody else's design
+  answers `404`, not `403`, so the id space cannot be walked to count what an
+  install holds.
+- Changing a password ends every other session for that account.
+
+**What you still have to do**
+
+- **Serve it over HTTPS.** Without TLS the session cookie travels in clear.
+- **Register the first account immediately after install.** On a fresh
+  database the first person to reach the sign-up form becomes the
+  administrator. Set `allow_first_admin_signup` to `false` in `api/config.php`
+  once that account exists if you want the window explicitly nailed shut.
+- **Treat share links as passwords.** They are bearer tokens by design; anyone
+  holding one can view that design. Give them an expiry, and revoke them when
+  a job is done.
+- **Keep `api/config.php` out of the web.** It holds the database password. The
+  bundled `.htaccess` denies it and the file aborts on direct access, but if
+  you run something other than Apache, add your own rule.
+- **Keep `data/` off the web.** It holds every saved gcode file, and the
+  filenames are guessable. How depends on the server:
+
+  - **Apache / cPanel (production).** The bundled `.htaccess` files already
+    deny `data/`, `tools/`, `api/config.php`, dotfiles and the spec/installer —
+    nothing more to do.
+  - **PHP built-in server (local dev).** `.htaccess` is **ignored**. Always
+    start it with the bundled router: `php -S localhost:8000 router.php`.
+  - **nginx.** `.htaccess` is **ignored**. Add deny rules to your server block
+    before routing the API through PHP-FPM:
+
+    ```nginx
+    location ^~ /data/  { deny all; return 404; }
+    location ^~ /tools/ { deny all; return 404; }
+    location = /api/config.php { deny all; return 404; }
+    location ~ /\.      { deny all; return 404; }
+    ```
 
 If you cannot apply server rules, move `data/` outside the web root and update
 `forge_data_dir()` in `api/db.php` to point at the new location.
+
+**Known limits of this threat model**
+
+- Share tokens are stored in the clear so an owner can copy a link again later
+  rather than seeing it exactly once. A database read therefore exposes live
+  share links — but the same read already exposes the designs themselves, so
+  this widens nothing that matters.
+- There is no email verification, no password-reset-by-email and no
+  two-factor. All three want reliable outbound mail, which shared hosting does
+  not dependably provide. A locked-out user needs an administrator running
+  `php tools/create-admin.php --reset`.
+- Uploaded artwork is not scanned. An SVG is parsed by the client's own parser
+  and never rendered as markup, and a shared design's bytes are served as JSON,
+  not as a document — but do not treat this as a general-purpose file host.
 
 ## Quick start
 
@@ -148,7 +366,14 @@ If you cannot apply server rules, move `data/` outside the web root and update
    first to dry-run the toolpath 25&nbsp;mm above the material.
 
 Your settings, selected bit and material are autosaved to the browser, so the
-session is restored when you reload the page.
+session is restored when you reload the page. That autosave does **not** carry
+the artwork — an uploaded SVG, a traced bitmap and an uploaded font live only
+in the tab you loaded them in. To keep those, sign in and **Save design**
+(step 8).
+
+8. **Save the design** if you want it back later, or a link to send someone.
+   *Save design* in the header stores the whole document — settings **and**
+   artwork — against your account; *Share* mints a read-only link to it.
 
 ## The interface
 
@@ -156,9 +381,14 @@ A single-page app in three columns (stacked on narrow screens):
 
 | Column | Contents |
 |--------|----------|
+| **Header** | The open design's name, **Save**, **Save as new…**, **Share** and **My designs**, plus the server status pill and the account menu. |
 | **Left** | Artwork (text, SVG, or bitmap tracing), operation picker, material &amp; bit pickers, job presets, pre-flight checks, the **Generate gcode** button. |
 | **Centre** | The live toolpath preview and its toolbar. |
 | **Right** | Settings tabs (Operation, Tabs, Geometry, Machine, Bit, Material) and a live job summary — stock size, runtime estimate, Z-pass count, chip load, cut distance and rapid distance. |
+
+A design opened through somebody else's share link adds a banner under the
+header marking it read-only, with **Save a copy** to fork it into your own
+account.
 
 ## Artwork
 
@@ -342,17 +572,26 @@ foam, PVC board, HDPE, plywood, MDF, hardboard, acrylic, composite panel,
 hardwood and aluminium. Selecting a material auto-fills the recommended feeds,
 DOC and (for through-cuts) the final depth.
 
-Everything is editable: change a value and **Update** it, **Save as new** to
-branch a variant, or **Delete** it. New entries you create are kept in the
-SQLite database.
+Everything is editable, but the seeded set is shared by every account and so
+is read-only: **Update** on a built-in bit or material saves you a private copy
+named `... (mine)` instead of changing it for everybody. **Save as new**
+branches a variant outright, and **Delete** removes one of your own. Entries you
+create are yours alone and live in the MySQL database. All of this needs an
+account; signed out, the seeded library is read-only.
 
 ## Job presets
 
-A preset captures the full job — operation, bit, material and every setting.
-**Save current settings as preset** stores it on the server; the **Job presets**
-picker loads or deletes saved presets. Four sample presets ship with the tool
-(foam engrave, plywood profile-cut with tabs, HDPE 2-colour sign engrave and an
-aluminium 6061 profile).
+A preset captures the machining settings — operation, bit, material and every
+setting — but **not** the artwork. It is what you reach for when cutting
+different artwork the same way; to keep the artwork too, save a
+[design](#accounts-designs-and-sharing) instead.
+
+**Save current settings as preset** stores it against your account; the **Job
+presets** picker loads or deletes saved presets. Preset names are per-account,
+so you and a colleague can each have a "My preset" without overwriting each
+other. Four sample presets ship with the tool (foam engrave, plywood
+profile-cut with tabs, HDPE 2-colour sign engrave and an aluminium 6061
+profile); those are read-only.
 
 ## Pre-flight validation
 
@@ -461,16 +700,49 @@ addresses them with a query-string route — `api/index.php?r=bits/3` — becaus
 `PATH_INFO` form (`api/index.php/bits/3`) still works as a fallback.
 
 ```
+GET                   health                     no auth, no database
+
+POST                  auth/register              invite token, or the first account
+POST                  auth/login
+POST                  auth/logout
+GET                   auth/me                    current user + CSRF token
+POST                  auth/password              change own password
+POST                  auth/profile               change own display name
+
+GET/POST              invites       invites/check admin; check is public
+DELETE                invites/:id                admin — revoke
+GET                   users                      admin
+PUT                   users/:id                  admin — role / disabled
+
+GET/POST              designs                    list mine / create
+GET/PUT/DELETE        designs/:id
+POST                  designs/:id/copy           duplicate my own
+GET/POST              designs/:id/shares         list / mint a share link
+DELETE                shares/:id                 revoke a share link
+GET                   shared/:token              public read-only view
+POST                  shared/:token/copy         fork into my account
+
 GET/POST/PUT/DELETE   bits          bits/:id
 GET/POST/PUT/DELETE   materials     materials/:id
 GET/POST/DELETE       presets       presets/:id
-POST                  jobs/save     persist generated gcode
-GET                   jobs          jobs/:id   (download)
-GET                   health
+POST                  jobs/save                  persist generated gcode
+GET                   jobs          jobs/:id     (download)
+DELETE                jobs/:id
 ```
 
-No authentication — the tool assumes a trusted local network (see *Known
-limitations*).
+Reads of `bits`, `materials`, `presets`, `health` and `shared/:token` work
+signed out — that is what keeps the tool usable without an account. Everything
+that writes requires a session **and** the `X-Forge-CSRF` header carrying the
+token from `auth/me`. Rows you do not own answer `404`.
+
+A `PUT designs/:id` is a partial save: any field the request omits keeps its
+stored value, and omitting `assets` entirely leaves the artwork alone. Sending
+`"assets": {}` is how you clear it, and `"assets": {"svg": {"unchanged": true}}`
+keeps a stored asset without re-uploading it.
+
+Editing a built-in bit or material returns **201** with a new, private row —
+the fork — rather than 200 with the original. The response carries
+`forked_from` so the client can follow it.
 
 ## Project layout
 
@@ -479,6 +751,9 @@ index.html               Single-page app
 css/styles.css            Theme
 js/
   app.js                  State, form generation, event wiring (text/SVG/bitmap)
+  account.js              Sign-in / register dialogs, account menu, admin panel
+  designs.js              Saved designs, the share dialog, read-only banner
+  ui.js                   Shared DOM helpers, modals, base64, formatting
   svg-parser.js           SVG -> millimetre geometry (transforms, units, curves)
   bitmap-tracer.js        Bitmap raster -> traced contour geometry
   workers/trace-worker.js Workerized bitmap tracing pipeline
@@ -489,14 +764,21 @@ js/
   gcode-emitter.js        Toolpath -> FluidNC gcode
   preview.js              Canvas rendering, pan/zoom, hover, drag
   validation.js           Pre-flight safety checks
-  presets.js              API client + LocalStorage autosave
+  presets.js              API client (accounts, designs, sharing, library)
   lib/clipper.js          Vendored Clipper 6.4.2 (Boost license)
   lib/opentype.js         Vendored opentype.js (MIT) — reads font outlines
 api/
   index.php               Router
-  db.php                  SQLite schema, seed data, helpers
+  config.php              MySQL credentials (gitignored; copy the .sample)
+  db.php                  MySQL schema, migrations, seed data, helpers
+  auth.php                Sessions, CSRF, registration, login throttle
+  invites.php             Invite links + the admin user list
+  designs.php             Saved designs, artwork assets, share links
   bits.php / materials.php / presets.php / jobs.php
-data/                     SQLite database + saved jobs (created at runtime)
+tools/
+  create-admin.php        Create / promote / reset an admin from a shell
+  migrate-sqlite-to-mysql.php   One-shot 1.x import
+data/                     Saved gcode files (created at runtime)
 fonts/                    Bundled open-licensed sign fonts (+ their licenses)
 samples/                  Test SVGs (square, circle, holes plate, text)
 ```
@@ -509,17 +791,34 @@ samples/                  Test SVGs (square, circle, holes plate, text)
 - **Job size looks wrong after upload.** If the SVG had no explicit units the
   size is assumed at 96&nbsp;dpi; correct it with the *Scale* setting. The SVG
   info panel flags files with no physical units.
-- **"Backend unavailable".** gcode generation still works fully — only preset,
-  bit and material storage needs PHP. Check that `data/` is writable and that
-  the `pdo_sqlite` extension is enabled (cPanel → *Select PHP Version* →
-  *Extensions*). The tool surfaces the exact cause in the error toast.
+- **"Backend unavailable".** gcode generation still works fully — only
+  accounts, designs and library storage need PHP. Check that the `pdo_mysql`
+  and `mbstring` extensions are enabled (cPanel → *Select PHP Version* →
+  *Extensions*). The tool names the missing one in the error toast.
+- **"Could not connect to MySQL".** The message repeats what the driver said.
+  On cPanel both the database name and the user name carry your account prefix
+  (`myaccount_forge`), and the user must be added to the database with ALL
+  PRIVILEGES under *MySQL Databases*.
+- **"The database is not configured yet".** `api/config.php` is missing or has
+  empty credentials. Copy `api/config.sample.php` over it and fill it in.
+- **Sign-in does not stick.** The session cookie is scoped to the app's path
+  and marked `Secure` over HTTPS. If you are behind a proxy that terminates
+  TLS, make sure it forwards `X-Forwarded-Proto`; otherwise set
+  `'cookie_secure' => true` in `api/config.php`.
+- **Locked out of the only admin account.** Run
+  `php tools/create-admin.php --email=you@example.com --reset --password='...'`
+  from a shell.
 - **HTTP 500 on every page.** A small number of hosts forbid `Options` in
   `.htaccess`. If so, delete the `Options -Indexes` line from the root
   `.htaccess`.
 - **An inside cut is skipped.** The contour was too small to offset inward with
   the chosen bit. Use a smaller bit or a different operation.
-- **A request body was dropped (HTTP 413).** A large preset or saved job
-  exceeded the host `post_max_size`; raise it in cPanel *MultiPHP INI Editor*.
+- **A request body was dropped (HTTP 413).** A large design, preset or saved
+  job exceeded the host `post_max_size`; raise it in cPanel *MultiPHP INI
+  Editor*. A design carries its artwork, so one with a 4&nbsp;MB SVG or an
+  8&nbsp;MB bitmap is genuinely that big. MySQL's `max_allowed_packet` has to
+  clear the same bar, and `max_design_bytes` in `api/config.php` caps it from
+  the tool's side (12&nbsp;MB by default).
 
 ## Known limitations
 
@@ -539,7 +838,20 @@ samples/                  Test SVGs (square, circle, holes plate, text)
 - The shape library's `pillBorder` renders as an ellipse border (not a true
   stadium with straight sides). A real stadium would need the shape API to
   know the target width/height aspect — out of scope for v1.
-- There is no authentication; deploy the tool only on a trusted local network.
+- Accounts are invite-only with no email verification, no
+  password-reset-by-email and no two-factor: all three need reliable outbound
+  mail, which shared hosting does not dependably provide. A locked-out user
+  needs an administrator with shell access.
+- Share links are bearer tokens. Anyone holding the URL can view that design
+  until it expires or is revoked.
+- A shared design records which bit and material it used, and the recipient may
+  not have those rows. The tool warns when it happens, but it cannot pick a
+  substitute for you — check the tooling before cutting somebody else's design.
+- Designs are not versioned: saving overwrites the stored copy, with no
+  history to roll back to. Use **Save as new…** before a change you might want
+  to undo.
+- There is no way to transfer a design's ownership, and accounts are disabled
+  rather than deleted, so a departing user's designs stay in their account.
   On non-Apache servers the `data/` directory must be protected explicitly —
   see [Security &amp; deployment hardening](#security--deployment-hardening).
 

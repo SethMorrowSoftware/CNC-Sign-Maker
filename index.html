@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LowRider Forge — SVG to Gcode</title>
 <meta name="description" content="Self-hosted SVG-to-Gcode tool for the LowRider v4 CNC.">
+<!-- A share link carries its token in the query string. Without this, the
+     first font fetched from a CDN would receive that token as a Referer.
+     The bundled .htaccess sets the same policy as a header; this covers the
+     hosts that ignore it (nginx, the PHP built-in server). -->
+<meta name="referrer" content="same-origin">
 <link rel="icon" href="img/logo.svg">
 <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -26,12 +31,20 @@
     </div>
   </div>
   <div class="topbar-spacer"></div>
+  <!-- Design toolbar (name, save, share, browser) — filled by js/designs.js. -->
+  <div class="topbar-design" id="topbar-design"></div>
   <div class="topbar-meta">
     <span id="server-status" class="pill pill-muted" role="status"
           aria-live="polite">connecting&hellip;</span>
-    <span class="pill pill-muted" id="version-pill">v1.0.0</span>
+    <span class="pill pill-muted" id="version-pill">v2.0.0</span>
   </div>
+  <!-- Account control (sign in / account menu) — filled by js/account.js. -->
+  <div class="account-area" id="account-area"></div>
 </header>
+
+<!-- Shown only while a design opened through someone else's share link is
+     loaded. Filled by js/designs.js. -->
+<div id="readonly-banner" class="readonly-banner hidden"></div>
 
 <main class="layout">
 
@@ -300,6 +313,9 @@
 <script src="js/validation.js"></script>
 <script src="js/preview.js"></script>
 <script src="js/presets.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/account.js"></script>
+<script src="js/designs.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

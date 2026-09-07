@@ -651,3 +651,135 @@ textarea:focus-visible {
   .modal-foot-actions { width: 100%; }
   .modal-foot-actions .btn { flex: 1; min-width: 0; }
 }
+
+/* ============================================================
+   Accounts, saved designs and sharing (v2)
+   ============================================================ */
+
+/* ---- topbar: design toolbar + account ------------------------------- */
+.topbar-design {
+  display: flex; align-items: center; gap: 7px;
+  min-width: 0; flex-wrap: wrap;
+}
+.design-name {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-sm { padding: 5px 10px; font-size: 11.5px; }
+
+.account-area { display: flex; align-items: center; }
+.account-menu-wrap { position: relative; }
+.account-trigger::after { content: " \25BE"; color: var(--muted); }
+.account-menu {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  min-width: 220px; z-index: 60;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.account-menu-who {
+  padding: 8px 9px 10px; border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+}
+.account-menu-name { font-size: 12.5px; font-weight: 600; }
+.account-menu-email { font-size: 11px; color: var(--muted); word-break: break-all; }
+.account-role { display: inline-block; margin-top: 6px; }
+.account-menu-item {
+  background: none; border: none; color: var(--text);
+  text-align: left; padding: 8px 9px; font-size: 12.5px;
+  border-radius: var(--radius-sm);
+}
+.account-menu-item:hover { background: var(--elevated); }
+
+/* ---- read-only banner (a design opened through a share link) --------- */
+.readonly-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+  padding: 9px 18px; flex-shrink: 0;
+  background: rgba(210,153,34,0.12);
+  border-bottom: 1px solid rgba(210,153,34,0.4);
+  font-size: 12.5px;
+}
+.readonly-text { min-width: 0; }
+.readonly-text .small { display: block; margin-top: 2px; }
+.readonly-actions { display: flex; gap: 7px; flex-shrink: 0; }
+
+/* ---- generic modal body used by the new dialogs ---------------------- */
+.modal-body { padding: 16px; overflow: auto; }
+.modal-card.modal-wide { width: min(880px, 100%); }
+.form-stack { display: flex; flex-direction: column; gap: 12px; }
+.form-stack .btn { align-self: flex-start; }
+.form-sep { border: none; border-top: 1px solid var(--border-soft); margin: 4px 0; }
+.form-notice {
+  font-size: 12px; line-height: 1.45; padding: 8px 10px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--muted);
+}
+.form-notice-error { color: var(--error); border-color: rgba(248,81,73,0.45);
+  background: rgba(248,81,73,0.08); }
+.form-notice-info  { color: var(--text); border-color: var(--accent-dim);
+  background: rgba(247,134,27,0.08); }
+
+/* ---- shared row styling for designs, shares and admin lists ---------- */
+.design-list, .share-list, .admin-list {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 12px;
+}
+.design-row, .share-row, .admin-row {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--panel-2); padding: 10px 11px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.design-row-open { border-color: var(--accent-dim); }
+.design-row-head, .share-row-head, .admin-row-head {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+}
+.design-row-title, .admin-row-title {
+  font-size: 13px; font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.design-row-meta, .share-row-meta, .admin-row-meta {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  font-size: 11px; color: var(--muted);
+}
+.design-row-note { font-style: italic; }
+.design-row-actions, .share-row-actions, .admin-row-actions {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+
+/* ---- share dialog ---------------------------------------------------- */
+.share-panel { display: flex; flex-direction: column; gap: 12px; }
+.share-panel > .btn { align-self: flex-start; }
+.share-url {
+  width: 100%; font-family: var(--mono); font-size: 11px;
+}
+
+/* ---- admin panel ----------------------------------------------------- */
+.admin-panel { display: flex; flex-direction: column; gap: 12px; }
+.admin-panel .tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.admin-tab {
+  background: var(--panel); border: none; color: var(--muted);
+  padding: 10px 8px; font-size: 12px; font-weight: 600;
+  border-bottom: 2px solid transparent;
+}
+.admin-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.admin-form {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 11px 12px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border-soft);
+}
+.admin-form .form-notice, .admin-form > .btn { grid-column: 1 / -1; }
+.admin-form > .btn { justify-self: start; }
+
+/* ---- responsive ------------------------------------------------------ */
+@media (max-width: 1180px) {
+  .design-name { max-width: 140px; }
+}
+@media (max-width: 900px) {
+  .topbar { height: auto; flex-wrap: wrap; row-gap: 8px; padding: 8px 12px; }
+  .topbar-spacer { display: none; }
+  .topbar-design { order: 3; width: 100%; }
+  .admin-form { grid-template-columns: 1fr; }
+}
